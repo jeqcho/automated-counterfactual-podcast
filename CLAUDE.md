@@ -18,18 +18,29 @@ Two jobs:
    3 lists (impact-ranked via pairwise insertion) → keep a ≥20h TTS listen queue topped
    up → publish a podcast RSS feed. He listens top-first and archives when done.
 
-## Status (as of 2026-06-01)
+## Status (overnight build, 2026-06-01)
 
-- **Planning: complete & reviewed.** Implementation: **not started.**
 - Plan: `reports/2026-06-01-counterfactual-podcast-plan.md` (reviewer-approved, 18 tasks).
 - Budget: `reports/budget-analysis.md` (Scenario C, ~$35 for the full sort).
-- Inbox access solved: `reports/inbox-access-finding.md`.
 - Profile/ranking doc: **FINAL** → `private/jay-profile-for-article-classification.scoped.md`.
-- Board backup saved: `private/board-backup-20260601-223725/` (all 4 lists, full JSON).
-- `.env`: Trello + Anthropic + R2 creds present. **R2 public access (r2.dev) still needs
-  enabling** in the Cloudflare dash (uploads work; public GET returned 403 until enabled).
-- Next: overnight build + non-mutating smoke tests; then tomorrow the real sort (after
-  Jay approves a Life-Optimization pilot).
+- Board backup: `private/board-backup-20260601-223725/` (all 4 lists, full JSON).
+- `.env`: Trello + Anthropic + R2 creds present. **R2 public access (r2.dev) returns 403**
+  — uploads/reads/deletes verified working; only the public-listen URL is pending the
+  Cloudflare "Allow Access" toggle. RSS can be generated locally meanwhile.
+
+### Build progress (overnight)
+- ✅ Scaffold (uv, pyproject, layout), `config.py`, `models.py`, `cache.py` — tested.
+- ✅ `trello.py` (client + backoff + rank marker + inbox resolution) — tested.
+- ✅ `extract.py` (HTML/PDF/text/hard dispatch, est_minutes) — tested.
+- ✅ `tts/` (Kokoro + OpenAI engines, chunk_text, factory) — tested (model mocked).
+- ✅ `sort.py` (concurrent merge sort, Copeland, binary insert) — tested incl. intransitive.
+- ✅ `llm_compare.py` (digest-based pairwise comparator, cached, Opus escalation) — tested.
+- ✅ `enrich.py` (Haiku impact-digest round, cached) — tested.
+- ⏳ Remaining: audio, listen_queue, rss, inbox, classify, oneshot_sort, weekly, logging,
+  usage docs, then non-mutating live smoke tests.
+- Test suite: **54 passing** so far. All LLM/network calls mocked in unit tests.
+- Constraint honored: NO board mutations, NO real 623-card sort overnight (profile-doc
+  finalized but the real sort waits for the Life-Optim pilot approval tomorrow).
 
 ## Architecture (how it works)
 
