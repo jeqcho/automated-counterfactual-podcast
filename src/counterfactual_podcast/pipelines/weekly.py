@@ -67,7 +67,7 @@ async def _build_and_run(apply: bool, log=None) -> dict:
     from ..cache import Cache
     from ..classify import Classifier
     from ..enrich import Enricher
-    from ..listen_queue import ensure_listen_queue, make_synth
+    from ..listen_queue import ensure_listen_queue, episodes_for_queue, make_synth
     from ..llm_compare import Comparator
     from ..rss import publish
     from ..trello import TrelloClient
@@ -84,8 +84,8 @@ async def _build_and_run(apply: bool, log=None) -> dict:
         return await ensure_listen_queue(client, cache, enricher, comparator, synth, log=log)
 
     def publish_fn():
-        # episodes built from the queue would be assembled here; kept minimal for now
-        return publish([], upload=bool(config.R2_BUCKET))
+        episodes = episodes_for_queue(client, cache)
+        return publish(episodes, upload=bool(config.R2_BUCKET))
 
     return await run_weekly(client, cache, enricher, classifier, comparator,
                             ensure_queue_fn, publish_fn, apply=apply, log=log)

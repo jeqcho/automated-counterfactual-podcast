@@ -13,6 +13,21 @@ from .models import AudioAsset, CardFeatures
 from .sort import merge_sort
 
 
+def episodes_for_queue(client, cache, queue_id: str | None = None):
+    """Build ordered podcast episodes from the Listen Queue's cards + cached audio."""
+    from .rss import QueueEpisode
+    qid = queue_id or client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
+    eps = []
+    for c in client.get_cards(qid):
+        a = cache.get_audio(c.id)
+        if not a:
+            continue
+        d = cache.get_digest(c.id)
+        eps.append(QueueEpisode(card_id=c.id, title=(d.title if d else c.name),
+                                audio_path=a.path, seconds=a.seconds, url=c.url))
+    return eps
+
+
 def make_synth(cache, engine=None):
     """Default synth: read extracted text from cache, TTS it, return AudioAsset|None."""
     from .audio import synthesize_card
