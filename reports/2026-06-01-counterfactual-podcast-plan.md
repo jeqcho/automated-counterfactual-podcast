@@ -34,9 +34,9 @@
 - **Out of scope:** `podcast`, `vids`, and the other 25 lists.
 - **Credentials present in gitignored `.env`:** `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ANTHROPIC_API_KEY`. (R2 + optional OpenAI keys added later.)
 
-## ⚠️ Open risk to resolve FIRST
+## ✅ Inbox access — RESOLVED (was the one open risk)
 
-The native Trello **Inbox** API returned `401 unauthorized member permission requested` with the current token scope. Task 1 is a spike to resolve this before anything depends on it. **Fallback if unresolvable:** use a dedicated board list named `Inbox` that Jay drops links into (functionally identical downstream).
+The native Trello **Inbox** is fully reachable with the standard read/write token. The `401` we first hit was the wrong endpoint (`/members/me/inbox`). The working path: `GET /1/members/me?fields=inbox` returns `inbox.idList` (a hidden personal board's "Inbox List"); read/move it like any normal list. Verified live 2026-06-01 (HTTP 200). Full details in `reports/inbox-access-finding.md`. **Consequence:** Jay's capture workflow is unchanged; no dedicated-list fallback needed (kept only as a footnote in case Atlassian ever removes the `inbox` member field).
 
 ---
 
@@ -75,22 +75,15 @@ tests/                 # pytest mirrors of src modules
 
 ## Phase 0 — Spike & Scaffold
 
-### Task 1: Spike — resolve native Trello Inbox access
+### Task 1: Inbox access — RESOLVED (verify-only)
 
-**Files:** Create `scripts/spike_inbox.py` (throwaway, kept for reference).
+**Status:** Already solved during planning (see `reports/inbox-access-finding.md`). The mechanism: `GET /1/members/me?fields=inbox` → `inbox.idList` → treat as a normal list. This task just locks it into code; no spike needed.
 
-- [ ] **Step 1: Probe Inbox endpoints with current token.** Try, logging status + body for each:
-  - `GET /1/members/me/boards?filter=all` (already returns 20 boards; confirm none is the Inbox).
-  - `GET /1/members/me/inbox` → known `401`.
-  - `GET /1/members/me?fields=prefs,idEnterprise` and inspect for an inbox/board pointer.
-  - The new Trello "Inbox" surface (Atlassian) — check `GET /1/members/me/boards?filter=open&fields=name,idOrganization` for a board flagged as the personal inbox.
-- [ ] **Step 2: If a scope problem,** regenerate token with `scope=read,write,account` via the authorize URL and re-test `/members/me/inbox`.
-- [ ] **Step 3: Decide & record outcome** in `reports/inbox-access-finding.md`:
-  - If reachable: document the exact endpoint + how to list Inbox cards and mark them done.
-  - If not: switch the design to the **dedicated `Inbox` list fallback** — `InboxSource` reads a board list named `Inbox`; ask Jay to drop links there. Update `config.py` accordingly.
-- [ ] **Step 4: Commit** the finding doc + spike script.
+- [ ] **Step 1: Confirm live** (read-only): `uv run python -c "import requests,os; from dotenv import load_dotenv; load_dotenv(); a={'key':os.environ['TRELLO_API_KEY'],'token':os.environ['TRELLO_TOKEN']}; il=requests.get('https://api.trello.com/1/members/me',params={**a,'fields':'inbox'}).json()['inbox']['idList']; print('inbox list', il, 'cards', len(requests.get(f'https://api.trello.com/1/lists/{il}/cards',params=a).json()))"` → Expected: prints the inbox list id + a card count (HTTP 200).
+- [ ] **Step 2:** Encode the path in `inbox.py` (Task 14): resolve `inbox.idList` dynamically at runtime (do NOT hardcode the account-specific id). Footnote fallback only: if the `inbox` field ever disappears, read a board list literally named `Inbox`.
+- [ ] **Step 3: Commit** (finding doc already committed).
 
-> Gate: `inbox.py` (Task 8) cannot be finalized until this task picks a path. Everything else (Tasks 2–7, the one-shot sort) is independent of it, so the one-time sort can proceed in parallel.
+> No longer a gate: `inbox.py` (Task 14) has a confirmed path. The one-shot sort (Tasks 2–9) is fully independent and can proceed immediately.
 
 ### Task 2: Project scaffold with uv
 
@@ -364,9 +357,9 @@ Responsibilities: upload each queue audio file to Cloudflare R2 (S3 API, zero eg
 
 ### Task 14: Inbox source
 
-**Files:** Create `src/counterfactual_podcast/inbox.py`, `tests/test_inbox.py`. **Depends on Task 1 outcome.**
+**Files:** Create `src/counterfactual_podcast/inbox.py`, `tests/test_inbox.py`. **Path confirmed (Task 1).**
 
-Responsibilities: `collect_inbox(client) -> list[Card]` from the native Inbox (if Task 1 resolved it) or the fallback `Inbox` list; create/ensure a `To Be Processed` list; move all inbox items there; return them. Idempotent (safe to re-run mid-week).
+Responsibilities: `inbox_list_id(client)` resolves `GET /members/me?fields=inbox → inbox.idList` dynamically; `collect_inbox(client) -> list[Card]` reads that list, ensures a `To Be Processed` list exists, moves all inbox cards there, returns them. Idempotent (safe to re-run mid-week). Footnote fallback (only if the `inbox` member field disappears): read a board list named `Inbox`.
 
 - [ ] **Step 1: Failing test** (mocked source): N inbox items → all moved into `To Be Processed`, returned list length N, empty inbox → no-op.
 - [ ] **Step 2–5: Run→FAIL, implement both source variants behind one interface, PASS, commit.**
@@ -442,11 +435,10 @@ uv run python -m counterfactual_podcast.pipelines.weekly 2>&1 | tee "logs/weekly
 - Listen queue tops up to **20h from System 1 + Life Optimization only**.
 - TTS = **Kokoro local** (pluggable to OpenAI/Fish/Qwen).
 - Delivery = **private podcast RSS feed** hosted on Cloudflare R2.
-- Inbox = **native Trello Inbox** (Task 1 confirms reachability; fallback = dedicated `Inbox` list).
+- Inbox = **native Trello Inbox**, resolved via `member.inbox.idList` (confirmed live; workflow unchanged).
 
 ## Decisions to surface to Jay before/at execution (don't discover late)
-1. **Inbox fallback** (review #9): if Task 1's spike can't reach the native Inbox via API, the fallback changes Jay's workflow (drop links into a dedicated `Inbox` list instead). Confirm this is acceptable *now* so Task 14 isn't blocked on a surprise.
-2. **Feed privacy** (review #6): default is "unlisted + unguessable UUID URL." If Jay wants real protection, opt into the Cloudflare Worker token gate. Decide before first publish.
-3. **TTS engine** after the Task 10 quality check: stay on free local Kokoro, or pay ~$15/wk for OpenAI `tts-1` if quality matters more.
-4. **20h reachability** (review #4): if Task 5's yield report shows the clean pool is < 20h, the queue target is treated as a soft floor.
+1. **Feed privacy** (review #6): default is "unlisted + unguessable UUID URL." If Jay wants real protection, opt into the Cloudflare Worker token gate. Decide before first publish.
+2. **TTS engine** after the Task 10 quality check: stay on free local Kokoro, or pay ~$15/wk for OpenAI `tts-1` if quality matters more.
+3. **20h reachability** (review #4): if Task 5's yield report shows the clean pool is < 20h, the queue target is treated as a soft floor.
 ```
