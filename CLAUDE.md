@@ -47,8 +47,17 @@ All 18 plan tasks implemented + tested. **91 unit tests passing** (all LLM/netwo
   for a 20h queue). Model at `data/kokoro-v1.0.onnx` (+voices). Needs `pydub` + ffmpeg.
 - **RSS**: valid podcast feed generated locally, ordered items, correct enclosure URLs.
 - **R2**: upload/read/delete verified; public r2.dev GET still 403 (needs Allow Access).
-- **yield_report.py** (extractable-hours sweep over all 351 System1+LifeOptim cards)
-  runs free/no-LLM → `outputs/yield_report.json` (answers: is 20h reachable?).
+- **yield report** (free, no-LLM sweep over all 351 System1+LifeOptim cards):
+  **246 extractable / 105 unreadable → ~91.7 audio-hours** of clean text, so the 20h
+  queue is reachable with ~4.5× headroom. Unreadable = 30 hard sources (X/YT/paywall),
+  **73 RuntimeError**, 2 HTTPError. `outputs/yield_report.json`.
+
+### Known follow-ups (not blocking)
+- **73 cards fail extraction with RuntimeError** (~21%). Likely trafilatura/fetch edge
+  cases; recovering them would raise the 91.7h further. Investigate `extract._default_fetch`
+  error handling and the per-card notes in `outputs/yield_report.json`.
+- R2 public r2.dev access still 403 (needs the Cloudflare "Allow Access" toggle).
+- Listen-queue full-reorder may move an in-progress top item; revisit if it bothers Jay.
 
 ### Constraint honored
 NO board mutations and NO real 623-card sort were run. The real sort waits for the
