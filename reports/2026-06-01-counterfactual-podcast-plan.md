@@ -49,7 +49,8 @@ src/counterfactual_podcast/
   trello.py            # TrelloClient: lists, cards, reorder, comments, labels, create list, archive
   inbox.py             # InboxSource: pull from native Inbox (or fallback list) -> cards
   extract.py           # fetch URL -> clean text + word_count + est_minutes; PDF/tweet/paywall handling
-  cache.py             # SQLite: extracted_content, pairwise_results, audio_files tables
+  enrich.py            # preprocessing round: extract + Haiku impact-digest -> CardFeatures (cached)
+  cache.py             # SQLite: extracted, digest, pairwise, audio tables
   llm_compare.py       # Comparator: A-vs-B pairwise judgment via Claude (profile doc prompt-cached)
   sort.py              # merge_sort(items, comparator); insert_sorted(item, sorted_list, comparator)
   classify.py          # route an inbox card -> {system1, system2, life_optim}
@@ -133,16 +134,17 @@ SYSTEM1_LIST_ID = "683cb9f4387706ad70dc4299"
 SYSTEM2_LIST_ID = "683cb9e94b55936c9e9505a3"
 LIFE_OPTIM_LIST_ID = "69cffff85c64bd09a7c8cd7d"
 TARGET_QUEUE_HOURS = 20
-WPM_READING = 230          # for est. reading time (matches profile doc)
-PROFILE_DOC = ROOT / "private" / "jay-profile-for-article-classification.md"
+WPM_READING = 230          # reading-time estimate (ranking denominator); audio duration is measured separately by mutagen
+PROFILE_DOC = ROOT / "private" / "jay-profile-for-article-classification.scoped.md"  # pairwise-only, scoped to actual usage
 OUTPUTS = ROOT / "outputs"; LOGS = ROOT / "logs"; DATA = ROOT / "data"
 TRELLO_KEY = os.environ.get("TRELLO_API_KEY")
 TRELLO_TOKEN = os.environ.get("TRELLO_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-# Model IDs confirmed current in this environment (2026-06): Sonnet 4.6 / Opus 4.8.
+# Model IDs confirmed current in this environment (2026-06): Sonnet 4.6 / Opus 4.8 / Haiku 4.5.
 # Overridable via env so a wrong/retired ID never hard-codes a 404.
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")        # comparator workhorse
-CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-4-8")  # close calls
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")        # comparator workhorse (Scenario C)
+CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-4-8")  # close calls (step>=6)
+CLAUDE_MODEL_DIGEST = os.environ.get("CLAUDE_MODEL_DIGEST", "claude-haiku-4-5-20251001")  # enrichment digests (cheap)
 MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "12"))
 ```
 - [ ] **Step 4: Verify model IDs are live** before relying on them: `uv run python -c "import anthropic,os; print([m.id for m in anthropic.Anthropic().models.list().data][:10])"` and confirm `CLAUDE_MODEL`/`CLAUDE_MODEL_ESCALATE` appear. If not, set them in `.env`. (Self-evident here since this very session runs on `claude-opus-4-8`.)
@@ -203,11 +205,27 @@ def test_bare_text_card_uses_name(tmp_path):
 - [ ] **Step 4: Run → PASS.** **Step 5: Commit.**
 - [ ] **Step 6: Measure real extractable yield** (feeds the 20h feasibility question, review issue #4). Run extraction across all System 1 + Life Optimization cards (cached), then print: total cards, `ok=True` count, `ok=False` by reason (paywall/X/YouTube/PDF-fail), and **total extractable audio hours** (`sum(est_minutes where ok)/60`). Save to `outputs/yield_report.json`. This number tells us whether a 20h queue is even reachable before we build the queue logic; if the clean pool is < 20h, the queue target becomes a soft floor (Task 12).
 
+### Task 5b: Enrichment round — impact digest (Scenario C)
+
+**Files:** Create `src/counterfactual_podcast/enrich.py`, `tests/test_enrich.py`.
+
+This is the **preprocessing round** that makes pairwise comparison ~5× cheaper. It runs once per card, cached. Each card appears in ~9–18 comparisons; instead of shipping the full article every time, we summarize each article **once** into a compact impact-relevant digest, then comparisons ship two tiny digests.
+
+Responsibilities: `enrich(card, cache) -> CardFeatures(card_id, title, est_minutes, digest, kind, ok)`:
+1. `extract(card)` (Task 5, cached) → text + `est_minutes` (reading time, code-computed; **no LLM**).
+2. If not already cached, one **Haiku** (`CLAUDE_MODEL_DIGEST`) call summarizes the text into a ~150-token digest **through the profile lens** (pillar-fit, novelty, key claims/data, density, length) — not a generic summary. Prompt-cached profile context. Store in `digest` table.
+3. For `ok=False` cards (paywall/X/YouTube/dead link) the digest falls back to title + any available metadata so they can still be *ranked in their list* (they're just excluded from the listen queue later).
+
+- [ ] **Step 1: Failing test** (mocked Haiku client): `enrich` returns a `CardFeatures` with a non-empty digest and `est_minutes` from extraction; a second call hits the cache (Haiku not invoked twice); an `ok=False` card still gets a title-based digest.
+- [ ] **Step 2: Run → FAIL.**
+- [ ] **Step 3: Implement.** Reuse the cached profile system block + a short digest instruction; cap input text (~6k tokens) so long PDFs don't blow cost; write digest to cache.
+- [ ] **Step 4: Run → PASS.** **Step 5: Commit.**
+
 ### Task 6: SQLite cache
 
 **Files:** Create `src/counterfactual_podcast/cache.py`, `tests/test_cache.py`.
 
-Tables: `extracted(card_id PK, title, text, word_count, est_minutes, kind, ok, note, fetched_at)`; `pairwise(a_id, b_id, winner_id, decided_at_step, why, model, ts, PRIMARY KEY(a_id,b_id))`; `audio(card_id PK, path, seconds, engine, ts)`. Cache is keyed so re-runs skip network/LLM work and merge sort is resumable.
+Tables: `extracted(card_id PK, title, text, word_count, est_minutes, kind, ok, note, fetched_at)`; `digest(card_id PK, digest, model, ts)` (the enrichment output, Task 5b); `pairwise(a_id, b_id, winner_id, decided_at_step, why, model, ts, PRIMARY KEY(a_id,b_id))`; `audio(card_id PK, path, seconds, engine, ts)`. Cache is keyed so re-runs skip network/LLM work and the merge sort is resumable; enrichment (extract + digest) runs once per card ever.
 
 - [ ] **Step 1: Failing test:** put/get round-trip for each table; `get_pairwise(a,b)` returns symmetric-aware result (store canonical order, flip winner on lookup).
 - [ ] **Step 2: Run → FAIL.** **Step 3: Implement** with stdlib `sqlite3`, a `Cache(path)` class, canonicalizing pair keys as `tuple(sorted((a,b)))`. **Step 4: PASS. Step 5: Commit.**
@@ -230,8 +248,8 @@ def test_profile_doc_is_cache_controlled(mock_anthropic):
     assert any(b.get("cache_control") for b in sys_blocks)
 ```
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement.** Provide BOTH a sync `compare(a,b)` and an async `acompare(a,b)` (the async path is what the concurrent sort drives). System = `[{type:text, text: PAIRWISE_INSTRUCTIONS}, {type:text, text: PROFILE_DOC, cache_control:{type:"ephemeral"}}]`. User message presents A and B (title, kind, est_minutes, first ~1,200 words of each). Force a tool/JSON response: `{winner: "A"|"B", step: 1-7, why: str}`. Map to card ids; on parse failure use deterministic fallback. Check cache before calling; write result after. `escalate_model` when the model reports `step >= 6` (genuinely close) — re-ask with `CLAUDE_MODEL_ESCALATE`. Share one `AsyncAnthropic` client + an `asyncio.Semaphore(MAX_LLM_CONCURRENCY)` + token-bucket so all callers respect rate limits.
-  > **Known limitation (review #11):** only the first ~1,200 words of each article are shown, so the model judges insight-density partly from `est_minutes` rather than full text. Acceptable cost/quality tradeoff; documented so it isn't mistaken for a bug.
+- [ ] **Step 3: Implement.** Operates on `CardFeatures` (Task 5b) — the comparator consumes **digests**, not raw article text. Provide BOTH a sync `compare(a,b)` and an async `acompare(a,b)` (the async path is what the concurrent sort drives). System = `[{type:text, text: PAIRWISE_INSTRUCTIONS}, {type:text, text: PROFILE_DOC, cache_control:{type:"ephemeral"}}]`. User message presents A and B (`title, kind, est_minutes, digest` for each — small payloads). Force a tool/JSON response: `{winner: "A"|"B", step: 1-7, why: str}`. Map to card ids; on parse failure use deterministic fallback. Check cache before calling; write result after. `escalate_model` when the model reports `step >= 6` (genuinely close) — re-ask with `CLAUDE_MODEL_ESCALATE` (Opus). Share one `AsyncAnthropic` client + an `asyncio.Semaphore(MAX_LLM_CONCURRENCY)` + token-bucket so all callers respect rate limits.
+  > Digests are written *through the profile lens* (Task 5b), so they preserve the impact-relevant signal (pillar-fit, novelty, density) the 7-step comparator needs — this is what makes the small payload sufficient rather than a quality compromise.
 - [ ] **Step 4: Run → PASS.** **Step 5: Commit.**
 
 ### Task 8: Generic LLM sort (merge sort + sorted insertion)
@@ -278,7 +296,7 @@ Responsibilities: for each of the 3 target lists — fetch cards → extract con
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** `sort_list(client, cache, comparator, list_id)`:
   1. `cards = client.get_cards(list_id)`
-  2. `items = [extract(c) for c in cards]` (cached)
+  2. `items = [await enrich(c, cache) for c in cards]` (Task 5b — extract + digest, cached, concurrent)
   3. write pre-sort snapshot (current order)
   4. `ranked = await merge_sort(items, comparator.acompare)`; then `ranked[:40] = copeland_rank(ranked[:40], ...)`
   5. write post-sort snapshot (proposed order + why per card)
@@ -417,7 +435,10 @@ uv run python -m counterfactual_podcast.pipelines.weekly 2>&1 | tee "logs/weekly
 
 ## Cost & performance notes
 
-- **Pairwise comparisons today:** ~6,700 calls (merge sort + Copeland-head), each ≈ (cached 4k-token profile + ~2.5k tokens of two article excerpts in, ~80 tokens out), run at concurrency 12. With prompt caching the profile doc is charged once per ~5-min window. Rough order: a few dollars on Sonnet; Opus escalations are a small minority. **~20–30 min wall-clock**, not hours.
+- **Approach = Scenario C (digest pre-pass + pairwise).** Confirmed pricing (per MTok): Sonnet 4.6 $3 in / $0.30 cache-read / $15 out; Opus 4.8 $5 / $0.50 / $25 (+~35% tokens, new tokenizer); Haiku 4.5 $1 / $0.10 / $5.
+- **Enrichment (Task 5b):** 623 Haiku digests ≈ **~$2** (extraction itself is $0 LLM). Cached forever; weekly only enriches new inbox cards.
+- **Pairwise comparisons:** ~6,700 calls (merge sort + Copeland-head) on small cached profile + two ~150-tok digests, run at concurrency 12. Sonnet bulk ≈ **~$24**; Opus escalation on the ~15% genuinely-close calls ≈ **~$8**. **Total today ≈ ~$35** (vs ~$110 if we shipped full 1,200-word excerpts). **~20–30 min wall-clock.** ±30% on Opus-escalation rate and article length.
+- **Cheaper alt (Scenario D, ~$15):** Haiku does the bulk comparator, escalating only ambiguous calls to Sonnet. Available via env (`CLAUDE_MODEL`).
 - **Weekly:** inbox is usually small (tens of cards) → tens of `insert_sorted` runs × ~log₂(300)≈9 comparisons ≈ a few hundred cached calls + classification. Cheap.
 - **TTS:** Kokoro local = $0; ~20h/week generated incrementally and cached so only *new* queue cards are synthesized.
 - **Caching everywhere** means re-runs and crashes are cheap to resume.
@@ -430,7 +451,8 @@ uv run python -m counterfactual_podcast.pipelines.weekly 2>&1 | tee "logs/weekly
 4. **Tasks 14–18** → weekly automation + scheduling.
 
 ## Decisions locked
-- Ordering = **LLM pairwise** (merge sort today, binary insertion weekly), context = `private/jay-profile-for-article-classification.md`, judge = Claude (Sonnet 4.6, Opus 4.8 for close calls), prompt-cached.
+- Ordering = **LLM pairwise** (merge sort today, binary insertion weekly), context = `private/jay-profile-for-article-classification.scoped.md` (pairwise-only, no cardinal scoring), judge = Claude (Sonnet 4.6, Opus 4.8 for close calls), prompt-cached.
+- Architecture = **Scenario C**: a one-time **enrichment round** (extract → code-computed `est_minutes` → Haiku impact-digest, cached) feeds the comparator; comparisons ship tiny digests, not full text. ~$35 today; reused weekly.
 - Reorder cards **in place**; attach rank + rationale as an idempotent description marker (not a comment).
 - Listen queue tops up to **20h from System 1 + Life Optimization only**.
 - TTS = **Kokoro local** (pluggable to OpenAI/Fish/Qwen).
