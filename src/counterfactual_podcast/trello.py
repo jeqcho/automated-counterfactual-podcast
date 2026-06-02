@@ -85,9 +85,19 @@ class TrelloClient:
         return None
 
     # -- reads --------------------------------------------------------------
+    @staticmethod
+    def _best_attachment_url(attachments) -> str:
+        """Most Trello reading cards store the article link as an ATTACHMENT.
+        Prefer the first external http(s) attachment; fall back to any http one."""
+        https = [a.get("url") for a in (attachments or [])
+                 if (a.get("url") or "").startswith("http")]
+        external = [u for u in https if "trello.com" not in u]
+        return (external or https or [""])[0]
+
     def get_cards(self, list_id: str) -> list[Card]:
         data = self._request(
-            "GET", f"/1/lists/{list_id}/cards", fields="name,desc,url,pos"
+            "GET", f"/1/lists/{list_id}/cards",
+            fields="name,desc,pos", attachments="true", attachment_fields="url",
         )
         cards: list[Card] = []
         for c in data or []:
@@ -101,7 +111,7 @@ class TrelloClient:
                     id=c["id"],
                     name=c.get("name", ""),
                     desc=c.get("desc", "") or "",
-                    url=c.get("url", "") or "",
+                    url=self._best_attachment_url(c.get("attachments")),
                     list_id=list_id,
                     pos=pos,
                 )

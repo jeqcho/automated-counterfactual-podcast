@@ -187,7 +187,9 @@ def extract_from_text(text: str, card_id: str = "", title: str = "") -> Extracte
 def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> ExtractedContent:
     """Extract content for a card. Never raises; see module docstring."""
     fetch = fetch or _default_fetch
-    url = find_url(card)
+    # URL may be in name/desc, or (most reading cards) carried on card.url from a
+    # Trello attachment resolved by TrelloClient.get_cards.
+    url = find_url(card) or (card.url or None)
 
     # 1. No URL -> treat the card itself as the text.
     if not url:

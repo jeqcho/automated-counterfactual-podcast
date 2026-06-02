@@ -112,6 +112,12 @@ Two jobs:
 - R2: S3 endpoint = `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto`.
   Public reads require enabling the **r2.dev subdomain** ("Allow Access") in bucket
   settings — uploads work without it but public GET 403s until enabled.
+- **Trello reading cards store the article URL as an ATTACHMENT, not in name/desc.**
+  `TrelloClient.get_cards` requests `attachments=true&attachment_fields=url` and sets
+  `card.url` to the first external http attachment; `extract` uses `find_url(card) or
+  card.url`. Without this, every card fell back to title-only extraction (est_minutes=0)
+  — caught by the overnight live smoke test. Some cards attach a trello.com-hosted PDF
+  whose download needs auth → 401 → gracefully `ok=False` (excluded from TTS).
 
 ## Pointers
 
