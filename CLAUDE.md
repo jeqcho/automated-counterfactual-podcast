@@ -28,19 +28,32 @@ Two jobs:
   — uploads/reads/deletes verified working; only the public-listen URL is pending the
   Cloudflare "Allow Access" toggle. RSS can be generated locally meanwhile.
 
-### Build progress (overnight)
-- ✅ Scaffold (uv, pyproject, layout), `config.py`, `models.py`, `cache.py` — tested.
-- ✅ `trello.py` (client + backoff + rank marker + inbox resolution) — tested.
-- ✅ `extract.py` (HTML/PDF/text/hard dispatch, est_minutes) — tested.
-- ✅ `tts/` (Kokoro + OpenAI engines, chunk_text, factory) — tested (model mocked).
-- ✅ `sort.py` (concurrent merge sort, Copeland, binary insert) — tested incl. intransitive.
-- ✅ `llm_compare.py` (digest-based pairwise comparator, cached, Opus escalation) — tested.
-- ✅ `enrich.py` (Haiku impact-digest round, cached) — tested.
-- ⏳ Remaining: audio, listen_queue, rss, inbox, classify, oneshot_sort, weekly, logging,
-  usage docs, then non-mutating live smoke tests.
-- Test suite: **54 passing** so far. All LLM/network calls mocked in unit tests.
-- Constraint honored: NO board mutations, NO real 623-card sort overnight (profile-doc
-  finalized but the real sort waits for the Life-Optim pilot approval tomorrow).
+### Build progress (overnight) — COMPLETE
+All 18 plan tasks implemented + tested. **91 unit tests passing** (all LLM/network mocked).
+- ✅ Foundation: `config`, `models`, `cache` (SQLite, symmetric pairwise).
+- ✅ `trello` (backoff, rank marker, inbox + **attachment-URL** resolution).
+- ✅ `extract` (HTML/PDF/text/hard, est_minutes) · `enrich` (Haiku digests, cached).
+- ✅ `sort` (concurrent merge + Copeland + binary insert) · `llm_compare` (cached, Opus escalation).
+- ✅ `tts/` (Kokoro + OpenAI) · `audio` · `listen_queue` · `rss` (R2) · `inbox` · `classify`.
+- ✅ pipelines: `oneshot_sort`, `weekly` · `logging_setup` + `scripts/run_*.sh`.
+- ✅ `reports/usage.md` runbook.
+
+### Live smoke-test results (non-mutating, real APIs)
+- **Model IDs** sonnet-4-6 / opus-4-8 / haiku-4-5 all verified live.
+- **Ranking pipeline** (6 real Life-Optim cards, read-only): real extraction + Haiku
+  digests + Sonnet pairwise → sensible impact order in ~40s, ~$0.10. Rationales cite
+  real content. (`scripts/smoke_live.py`, logs/smoke_rank2-*.log)
+- **Kokoro TTS**: synthesized a 10.7s MP3 in 6.1s = **1.76× real-time** (so ~11h compute
+  for a 20h queue). Model at `data/kokoro-v1.0.onnx` (+voices). Needs `pydub` + ffmpeg.
+- **RSS**: valid podcast feed generated locally, ordered items, correct enclosure URLs.
+- **R2**: upload/read/delete verified; public r2.dev GET still 403 (needs Allow Access).
+- **yield_report.py** (extractable-hours sweep over all 351 System1+LifeOptim cards)
+  runs free/no-LLM → `outputs/yield_report.json` (answers: is 20h reachable?).
+
+### Constraint honored
+NO board mutations and NO real 623-card sort were run. The real sort waits for the
+Life-Optim pilot approval. Run it via `scripts/run_oneshot.sh --list life_optim` (dry
+run) → review → `--apply`.
 
 ## Architecture (how it works)
 
