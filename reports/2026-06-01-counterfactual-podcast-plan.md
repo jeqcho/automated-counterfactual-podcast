@@ -438,7 +438,7 @@ uv run python -m counterfactual_podcast.pipelines.weekly 2>&1 | tee "logs/weekly
 
 ## Decisions locked
 - Ordering = **LLM pairwise** (merge sort today, binary insertion weekly), context = `private/jay-profile-for-article-classification.md`, judge = Claude (Sonnet 4.6, Opus 4.8 for close calls), prompt-cached.
-- Reorder cards **in place**; attach rank + rationale as a comment.
+- Reorder cards **in place**; attach rank + rationale as an idempotent description marker (not a comment).
 - Listen queue tops up to **20h from System 1 + Life Optimization only**.
 - TTS = **Kokoro local** (pluggable to OpenAI/Fish/Qwen).
 - Delivery = **private podcast RSS feed** hosted on Cloudflare R2.
