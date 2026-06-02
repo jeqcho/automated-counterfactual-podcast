@@ -218,3 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 private/
+# Project build artifacts
+/outputs/
+/logs/
+/data/*.onnx
+/data/*.bin
+/data/*.pt
+/data/voices*
+.pytest_cache/
