@@ -1,0 +1,105 @@
+"""Weekly automation: inbox -> route -> impact-insert -> top up queue -> publish.
+
+1. Collect the native Trello Inbox into "To Be Processed".
+2. For each card: enrich -> classify (System1/System2/LifeOptim) -> binary-insert into
+   the target list at its counterfactual-impact rank, then move the Trello card there.
+3. Top up the Listen Queue to the 20h soft floor (System1 + LifeOptim only).
+4. Publish the podcast RSS feed (R2, or local if hosting not enabled).
+
+SAFETY: defaults to dry-run (apply=False) — classifies/ranks and reports, but does not
+move cards, synthesize audio, or publish. Pass apply=True for the real weekly run.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+
+from .. import config
+from ..classify import target_list_id
+from ..inbox import collect_inbox, resolve_inbox_list_id
+from ..sort import insert_sorted
+
+
+def _insertion_pos(ordered, idx, pos_by_id) -> float:
+    left = ordered[idx - 1] if idx > 0 else None
+    right = ordered[idx + 1] if idx + 1 < len(ordered) else None
+    lp = pos_by_id.get(left.card_id, 0.0) if left else 0.0
+    rp = pos_by_id.get(right.card_id, lp + 2000.0) if right else lp + 2000.0
+    return (lp + rp) / 2.0
+
+
+async def run_weekly(client, cache, enricher, classifier, comparator,
+                     ensure_queue_fn, publish_fn, *, apply: bool = False, log=None) -> dict:
+    # apply: actually collect (moves inbox -> To Be Processed). dry-run: just read it.
+    if apply:
+        moved = collect_inbox(client)
+    else:
+        moved = client.get_cards(resolve_inbox_list_id(client))
+    if log:
+        log.info(f"{'collected' if apply else 'previewing'} {len(moved)} inbox cards")
+
+    routed = []
+    for card in moved:
+        feats = await enricher.aenrich(card)
+        label = (await classifier.aclassify(feats)).get("label", "system1")
+        list_id = target_list_id(label)
+        rank = None
+        if apply:
+            existing = client.get_cards(list_id)
+            pos_by_id = {c.id: c.pos for c in existing}
+            existing_feats = await enricher.aenrich_many(existing)
+            ordered = await insert_sorted(feats, existing_feats, comparator.acompare)
+            idx = next(i for i, f in enumerate(ordered) if f.card_id == feats.card_id)
+            rank = idx + 1
+            client.move_card(card.id, list_id, pos=_insertion_pos(ordered, idx, pos_by_id))
+            client.set_rank_marker(card, rank, feats.est_minutes,
+                                   (feats.digest or "")[:80])
+        routed.append({"card_id": card.id, "label": label, "rank": rank})
+        if log:
+            log.info(f"  {card.id} -> {label}" + (f" @#{rank}" if rank else ""))
+
+    queue = await ensure_queue_fn() if apply else {"skipped": "dry-run"}
+    feed = publish_fn() if apply else {"skipped": "dry-run"}
+    return {"processed": len(moved), "routed": routed, "queue": queue, "feed": feed}
+
+
+async def _build_and_run(apply: bool, log=None) -> dict:
+    from ..cache import Cache
+    from ..classify import Classifier
+    from ..enrich import Enricher
+    from ..listen_queue import ensure_listen_queue, make_synth
+    from ..llm_compare import Comparator
+    from ..rss import publish
+    from ..trello import TrelloClient
+
+    client = TrelloClient(config.TRELLO_KEY, config.TRELLO_TOKEN)
+    cache = Cache(config.CACHE_DB)
+    profile = config.PROFILE_DOC.read_text(encoding="utf-8")
+    enricher = Enricher(cache=cache, profile_doc=profile)
+    classifier = Classifier(cache=cache, profile_doc=profile)
+    comparator = Comparator(cache=cache, profile_doc=profile)
+    synth = make_synth(cache)
+
+    async def ensure_queue_fn():
+        return await ensure_listen_queue(client, cache, enricher, comparator, synth, log=log)
+
+    def publish_fn():
+        # episodes built from the queue would be assembled here; kept minimal for now
+        return publish([], upload=bool(config.R2_BUCKET))
+
+    return await run_weekly(client, cache, enricher, classifier, comparator,
+                            ensure_queue_fn, publish_fn, apply=apply, log=log)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Weekly inbox->queue->podcast automation")
+    ap.add_argument("--apply", action="store_true", help="mutate the board + publish")
+    args = ap.parse_args()
+    from ..logging_setup import setup_logging
+    log = setup_logging("weekly")
+    res = asyncio.run(_build_and_run(args.apply, log=log))
+    log.info(f"processed={res['processed']} queue={res.get('queue')} feed={res.get('feed')}")
+
+
+if __name__ == "__main__":
+    main()
