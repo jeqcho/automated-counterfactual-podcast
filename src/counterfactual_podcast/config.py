@@ -60,6 +60,8 @@ MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "12"))
 # --- TTS ------------------------------------------------------------------
 TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")
 KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_heart")
+KOKORO_MODEL_PATH = os.environ.get("KOKORO_MODEL_PATH", str(DATA / "kokoro-v1.0.onnx"))
+KOKORO_VOICES_PATH = os.environ.get("KOKORO_VOICES_PATH", str(DATA / "voices-v1.0.bin"))
 
 
 def ensure_dirs() -> None:

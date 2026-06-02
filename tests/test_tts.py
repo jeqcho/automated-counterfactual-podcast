@@ -61,12 +61,13 @@ def test_chunk_text_oversized_single_sentence_not_dropped():
 
 # --- factory --------------------------------------------------------------
 
-def test_get_engine_kokoro_no_heavy_import():
-    # Constructing must NOT require kokoro_onnx (it is not installed here).
-    assert importlib.util.find_spec("kokoro_onnx") is None
+def test_get_engine_kokoro_constructs_lazily():
+    # Constructing must NOT load the model (that happens lazily in synthesize),
+    # so this is cheap whether or not kokoro_onnx is installed.
     engine = get_engine("kokoro")
     assert isinstance(engine, KokoroEngine)
     assert isinstance(engine, TTSEngine)  # satisfies the runtime Protocol
+    assert engine._model is None          # model not loaded at construction
 
 
 def test_get_engine_default_is_kokoro():

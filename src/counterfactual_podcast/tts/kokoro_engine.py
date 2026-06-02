@@ -29,7 +29,8 @@ class KokoroEngine:
         if self._model is None:
             from kokoro_onnx import Kokoro  # lazy: only needed for real synth
 
-            self._model = Kokoro()
+            self._model = Kokoro(str(config.KOKORO_MODEL_PATH),
+                                 str(config.KOKORO_VOICES_PATH))
         return self._model
 
     def _synth_chunk(self, text: str):
