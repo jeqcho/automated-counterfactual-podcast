@@ -25,6 +25,17 @@ from .models import Card, ExtractedContent
 
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+", re.IGNORECASE)
 
+# Many sites (and Cloudflare's bot protection) block default/library user-agents,
+# which is why trafilatura.fetch_url silently returned nothing for ~21% of cards.
+# Fetch with a real browser UA via requests, then hand the HTML to trafilatura.
+_BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+_HTTP_HEADERS = {
+    "User-Agent": _BROWSER_UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 # Domains we cannot reliably extract: JS-only social, video, known paywalls.
 HARD_DOMAINS: frozenset[str] = frozenset(
     {
@@ -102,13 +113,14 @@ def _default_fetch(url: str) -> dict:
     if not pdf_hint:
         # Cheap HEAD to detect PDFs served from non-.pdf URLs.
         try:
-            head = requests.head(url, allow_redirects=True, timeout=20)
+            head = requests.head(url, allow_redirects=True, timeout=20,
+                                 headers=_HTTP_HEADERS)
             content_type = (head.headers.get("content-type") or "").lower()
         except Exception:
             content_type = ""
 
     if pdf_hint or "application/pdf" in content_type:
-        resp = requests.get(url, timeout=60)
+        resp = requests.get(url, timeout=60, headers=_HTTP_HEADERS)
         resp.raise_for_status()
         return {
             "kind": "pdf",
@@ -118,13 +130,29 @@ def _default_fetch(url: str) -> dict:
             "title": "",
         }
 
-    downloaded = trafilatura.fetch_url(url)
-    if not downloaded:
-        raise RuntimeError(f"trafilatura could not fetch {url}")
-    text = trafilatura.extract(downloaded) or ""
+    # Fetch HTML with a browser UA (recovers UA/bot-blocked sites), then let
+    # trafilatura parse the HTML string. Fall back to trafilatura.fetch_url.
+    html = ""
+    try:
+        resp = requests.get(url, timeout=30, headers=_HTTP_HEADERS,
+                            allow_redirects=True)
+        resp.raise_for_status()
+        ct = (resp.headers.get("content-type") or "").lower()
+        if "application/pdf" in ct:  # some sites only reveal PDF on GET
+            return {"kind": "pdf", "raw": resp.content, "content_type": ct,
+                    "text": "", "title": ""}
+        html = resp.text
+    except Exception:
+        html = ""
+    if not html:
+        html = trafilatura.fetch_url(url) or ""
+    if not html:
+        raise RuntimeError(f"could not fetch {url}")
+
+    text = trafilatura.extract(html) or ""
     title = ""
     try:
-        meta = trafilatura.extract_metadata(downloaded)
+        meta = trafilatura.extract_metadata(html)
         if meta is not None:
             title = getattr(meta, "title", "") or ""
     except Exception:
@@ -134,7 +162,7 @@ def _default_fetch(url: str) -> dict:
         "text": text,
         "title": title,
         "content_type": content_type or "text/html",
-        "raw": downloaded,
+        "raw": html,
     }
 
 
