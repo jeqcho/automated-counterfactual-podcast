@@ -25,7 +25,8 @@ LIFE_OPTIM_LIST_ID = "69cffff85c64bd09a7c8cd7d"  # "Life Optimization"
 # Lists the listen queue may top up from (System 2 excluded — needs focused reading).
 QUEUE_SOURCE_LIST_IDS = (SYSTEM1_LIST_ID, LIFE_OPTIM_LIST_ID)
 
-TO_BE_PROCESSED_LIST_NAME = "To Be Processed"
+TO_BE_PROCESSED_LIST_NAME = "To Be Processed"   # Phase 1 output (you review here)
+READY_TO_PROCESS_LIST_NAME = "▶ Ready to Process"  # Phase 2 trigger (drag here to process)
 LISTEN_QUEUE_LIST_NAME = "Listen Queue"
 
 # --- Ranking / queue constants -------------------------------------------
