@@ -12,19 +12,31 @@ import argparse
 import asyncio
 
 from .. import config
+from ..extract import find_url
 from ..inbox import resolve_inbox_list_id
+
+
+def _has_link(card) -> bool:
+    """A card is a candidate readable only if it actually has a URL — in the name/desc
+    or carried on card.url from a Trello attachment. No link => nothing to read."""
+    return bool(find_url(card) or (card.url or ""))
 
 
 async def run_phase1(client, triager, *, apply: bool = False, log=None) -> dict:
     src = resolve_inbox_list_id(client)
     dest = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
     cards = client.get_cards(src)
-    if log:
-        log.info(f"inbox has {len(cards)} cards — triaging read-vs-do…")
 
-    verdicts = await asyncio.gather(*[triager.atriage(c) for c in cards])
+    # Gate on links FIRST: only run Haiku on cards that have a URL.
+    linked = [c for c in cards if _has_link(c)]
+    no_link = [c for c in cards if not _has_link(c)]
+    if log:
+        log.info(f"inbox {len(cards)} cards: {len(linked)} have links (triaging), "
+                 f"{len(no_link)} link-less (kept in inbox)")
+
+    verdicts = await asyncio.gather(*[triager.atriage(c) for c in linked])
     moved, kept = [], []
-    for card, v in zip(cards, verdicts):
+    for card, v in zip(linked, verdicts):
         if v["kind"] == "read":
             if apply:
                 # cross-board move: native Inbox (hidden board) -> Home base list
@@ -35,8 +47,9 @@ async def run_phase1(client, triager, *, apply: bool = False, log=None) -> dict:
         if log:
             log.info(f"  [{v['kind']}] {card.name[:55]}")
 
-    return {"inbox": len(cards), "moved_to_review": len(moved),
-            "kept_as_todo": len(kept), "moved": moved, "kept": kept, "applied": apply}
+    return {"inbox": len(cards), "with_links": len(linked), "no_link_kept": len(no_link),
+            "moved_to_review": len(moved), "kept_as_todo": len(kept),
+            "moved": moved, "kept": kept, "applied": apply}
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:
