@@ -1,0 +1,79 @@
+{
+  // Cloudflare Worker + Container deployment for the counterfactual-podcast pipeline.
+  // Containers are GA on the Workers Paid plan. `wrangler deploy` builds the Dockerfile,
+  // pushes the image, and deploys the Worker (worker/index.js) that fronts it.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "counterfactual-podcast",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-06-01",
+
+  // The Container runs our FastAPI server (uvicorn on :8080). max_instances=1 reinforces
+  // the singleton container the Worker addresses via idFromName("singleton") — so the
+  // per-phase asyncio locks in server.py serialize all runs. "lite" is plenty for an
+  // I/O-bound orchestrator (the heavy lifting is Claude/Trello/Google TTS/R2, all cloud).
+  "containers": [
+    {
+      "class_name": "PodcastContainer",
+      "image": "./Dockerfile",
+      "max_instances": 1,
+      "instance_type": "lite"
+    }
+  ],
+
+  // The Container class is backed by a Durable Object. SQLite-backed DOs are required
+  // for containers, hence new_sqlite_classes in the migration.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PODCAST_CONTAINER",
+        "class_name": "PodcastContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PodcastContainer"]
+    }
+  ],
+
+  // Cron schedule. event.cron is matched in worker/index.js scheduled():
+  //   "0 6 * * *" -> POST /phase1 (daily 06:00 UTC: build/rank, output to review list)
+  //   "0 * * * *" -> POST /phase2 (hourly: drain "Ready to Process" + top up queue)
+  "triggers": {
+    "crons": ["0 6 * * *", "0 * * * *"]
+  },
+
+  // ---------------------------------------------------------------------------
+  // SECRETS & VARS — NOT committed. Set after deploy. See reports/deploy-steps.md.
+  //
+  //   wrangler secret put TRELLO_API_KEY
+  //   wrangler secret put TRELLO_TOKEN
+  //   wrangler secret put ANTHROPIC_API_KEY
+  //   wrangler secret put R2_ACCOUNT_ID
+  //   wrangler secret put R2_ACCESS_KEY_ID
+  //   wrangler secret put R2_SECRET_ACCESS_KEY
+  //   wrangler secret put R2_BUCKET
+  //   wrangler secret put R2_PUBLIC_BASE
+  //   wrangler secret put TRIGGER_TOKEN
+  //   wrangler secret put GOOGLE_CREDENTIALS_JSON   # full service-account JSON
+  //
+  // Non-secret vars (TTS_ENGINE=google is also baked into the Dockerfile as a default;
+  // GOOGLE_APPLICATION_CREDENTIALS points at the path the container writes the JSON to
+  // at startup — see reports/deploy-steps.md for the entrypoint that materializes it).
+  //   "vars": {
+  //     "TTS_ENGINE": "google",
+  //     "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp-sa.json",
+  //     "PODCAST_PREFIX": "<unguessable-uuid-prefix>"
+  //   }
+  //
+  // Bind the public hostname trigger.chojeq.com to this Worker via a route (Dashboard
+  // > Workers > Routes, or `routes` below once the zone DNS is in place):
+  //   "routes": [
+  //     { "pattern": "trigger.chojeq.com", "custom_domain": true }
+  //   ]
+  // ---------------------------------------------------------------------------
+  "observability": {
+    "enabled": true
+  }
+}

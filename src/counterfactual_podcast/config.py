@@ -51,6 +51,9 @@ R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
 R2_BUCKET = os.environ.get("R2_BUCKET")
 R2_PUBLIC_BASE = os.environ.get("R2_PUBLIC_BASE")
+# Stable unguessable path prefix for the podcast feed ("unlisted" privacy). Pin it in
+# .env so the feed URL Jay subscribes to never changes across re-publishes.
+PODCAST_PREFIX = os.environ.get("PODCAST_PREFIX", "")
 
 # --- Models (confirmed current 2026-06; overridable) ----------------------
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")               # comparator workhorse
@@ -74,3 +77,23 @@ GOOGLE_TTS_LANGUAGE = os.environ.get("GOOGLE_TTS_LANGUAGE", "en-US")
 def ensure_dirs() -> None:
     for d in (OUTPUTS, LOGS, DATA):
         d.mkdir(parents=True, exist_ok=True)
+
+
+def _materialize_google_credentials() -> None:
+    """In the container the Google service-account JSON is passed as a secret
+    (GOOGLE_CREDENTIALS_JSON) and written to the GOOGLE_APPLICATION_CREDENTIALS path
+    (which the google client reads via ADC). No-op locally / if already present."""
+    blob = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    dest = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not (blob and dest):
+        return
+    try:
+        p = Path(dest)
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(blob)
+    except Exception:
+        pass
+
+
+_materialize_google_credentials()

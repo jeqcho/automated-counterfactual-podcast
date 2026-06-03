@@ -1,0 +1,43 @@
+# Keep the build context (and image) lean. Anything matched here is NOT sent to
+# the Docker daemon. The Dockerfile copies only what it needs anyway; this is the
+# belt-and-suspenders + faster-context layer.
+
+# Virtualenvs / build artifacts
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Runtime + generated state (durable state lives in R2, not the image)
+outputs/
+logs/
+data/
+
+# Local-only Kokoro models live in data/ — already excluded above.
+
+# VCS + caches
+.git/
+.gitignore
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Tests are not needed at runtime
+tests/
+
+# Secrets: provided via wrangler secrets/vars, never baked into the image
+.env
+.env.*
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
+
+# private/ is personal (board backups, profile drafts). Exclude the whole folder,
+# then re-include ONLY the scoped profile doc the ranking pipeline needs.
+private/
+!private/jay-profile-for-article-classification.scoped.md

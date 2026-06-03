@@ -48,12 +48,20 @@ def _check_token(token: str | None) -> None:
 
 
 async def run_named(name: str) -> None:
-    """Run a phase under its lock; skip if one is already in flight."""
+    """Run a phase under its lock; skip if one is already in flight.
+
+    Wraps the run with R2 cache pull/push so a scale-to-zero container preserves the
+    expensive digests/comparisons across runs (no-op when R2 is unconfigured)."""
     lock = _LOCKS[name]
     if lock.locked():
         return
     async with lock:
-        await RUNNERS[name]()
+        from .cache import pull_cache_from_r2, push_cache_to_r2
+        await asyncio.to_thread(pull_cache_from_r2)
+        try:
+            await RUNNERS[name]()
+        finally:
+            await asyncio.to_thread(push_cache_to_r2)
 
 
 @app.get("/health")

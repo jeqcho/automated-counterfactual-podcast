@@ -6,11 +6,16 @@ lookup, so get(a,b) and get(b,a) agree.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
 
 from .models import AudioAsset, CardFeatures, ExtractedContent, PairwiseResult
+
+# Where the SQLite cache lives in R2 (cloud: containers scale to zero & lose disk,
+# so we pull it on start and push it after each run).
+R2_CACHE_KEY = "state/cache.sqlite3"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS extracted (
@@ -110,3 +115,35 @@ class Cache:
 
     def close(self) -> None:
         self.conn.close()
+
+
+# --- R2 durability (cloud: containers scale to zero & lose local disk) -----------
+def pull_cache_from_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
+    """Download the cache DB from R2 before a run (no-op if R2 unconfigured or absent)."""
+    from . import config
+    from .r2 import r2_client, r2_configured
+    if not r2_configured():
+        return False
+    p = str(path or config.CACHE_DB)
+    Path(p).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r2_client().download_file(config.R2_BUCKET, key, p)
+        return True
+    except Exception:
+        return False  # first run: no cache in R2 yet
+
+
+def push_cache_to_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
+    """Upload the cache DB to R2 after a run (preserves digests/comparisons/audio rows)."""
+    from . import config
+    from .r2 import r2_client, r2_configured
+    if not r2_configured():
+        return False
+    p = str(path or config.CACHE_DB)
+    if not os.path.exists(p):
+        return False
+    try:
+        r2_client().upload_file(p, config.R2_BUCKET, key)
+        return True
+    except Exception:
+        return False

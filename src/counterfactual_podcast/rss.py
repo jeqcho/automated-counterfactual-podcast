@@ -88,35 +88,7 @@ def build_feed(
     return fg.rss_str(pretty=True).decode("utf-8")
 
 
-def r2_client():
-    """Return a boto3 S3 client configured for Cloudflare R2.
-
-    Isolated so tests can monkeypatch it. R2's S3 endpoint is
-    ``https://<account>.r2.cloudflarestorage.com``, region ``auto``, sig v4.
-    """
-    import boto3
-    from botocore.config import Config
-
-    endpoint = f"https://{config.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=config.R2_ACCESS_KEY_ID,
-        aws_secret_access_key=config.R2_SECRET_ACCESS_KEY,
-        region_name="auto",
-        config=Config(signature_version="s3v4"),
-    )
-
-
-def _r2_configured() -> bool:
-    return all(
-        (
-            config.R2_ACCOUNT_ID,
-            config.R2_ACCESS_KEY_ID,
-            config.R2_SECRET_ACCESS_KEY,
-            config.R2_BUCKET,
-        )
-    )
+from .r2 import r2_client, r2_configured as _r2_configured  # noqa: E402  (shared client)
 
 
 def publish(
@@ -147,6 +119,10 @@ def publish(
     if upload and _r2_configured():
         client = r2_client()
         for ep in episodes:
+            # With a stable prefix, audio uploaded in a prior run is already in R2; on a
+            # fresh container the local file may be gone — skip it (enclosure still resolves).
+            if not Path(ep.audio_path).exists():
+                continue
             with open(ep.audio_path, "rb") as fh:
                 client.put_object(
                     Bucket=config.R2_BUCKET,
