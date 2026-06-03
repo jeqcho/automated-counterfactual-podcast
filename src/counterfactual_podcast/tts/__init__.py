@@ -28,5 +28,9 @@ def get_engine(name: str | None = None) -> TTSEngine:
         from .openai_engine import OpenAIEngine
 
         return OpenAIEngine()
+    if name == "google":
+        from .google_engine import GoogleEngine
+
+        return GoogleEngine()
 
     raise ValueError(f"Unknown TTS engine: {name!r}")
