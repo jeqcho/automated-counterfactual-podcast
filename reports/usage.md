@@ -22,17 +22,30 @@ uv run python -m counterfactual_podcast.pipelines.oneshot_sort --list life_optim
   original positions; restore from it if an order looks wrong.
 - Cost ≈ ~$35 for all 623 cards (Scenario C); ~20–30 min wall-clock at concurrency 12.
 
-## Weekly automation (inbox → route → queue → podcast)
+## Ongoing intake — two phases (with a review checkpoint)
+
+The Inbox mixes reading links with todos, so intake is split:
+
+**Phase 1 — triage Inbox → To Be Processed** (moves only reading material):
 ```bash
-./scripts/run_weekly.sh            # runs counterfactual_podcast.pipelines.weekly
-# dry-run preview (no mutation):
-uv run python -m counterfactual_podcast.pipelines.weekly
-# real run:
-uv run python -m counterfactual_podcast.pipelines.weekly --apply
+./scripts/run_phase1.sh            # dry-run preview
+./scripts/run_phase1.sh --apply    # actually move reading-material cards
 ```
-Steps: collect native Trello Inbox → "To Be Processed"; classify each card
-(System1/System2/LifeOptim) and binary-insert it at its impact rank; top up the
-Listen Queue to ~20h (System1 + LifeOptim only); publish the RSS feed.
+Then **review** the `To Be Processed` list in Trello and drag any mistakes back to the
+Inbox. Drag the keepers into the **`▶ Ready to Process`** list — that's the Phase 2 "go".
+
+**Phase 2 — drain ▶ Ready to Process → route + rank + queue + publish**:
+```bash
+./scripts/run_phase2.sh            # dry-run preview
+./scripts/run_phase2.sh --apply    # route each card to System1/2/LifeOptim at its
+                                   # impact rank, top up the 20h queue, publish RSS
+```
+Phase 2 is a no-op when `▶ Ready to Process` is empty, so it's safe to run on a schedule
+(it processes whatever you've dragged in since last time). System 2 cards are routed but
+never enter the listen queue.
+
+> The older single-step `pipelines/weekly` still exists but the two-phase flow above
+> supersedes it (adds the human review checkpoint).
 
 ## Listen queue & "done"
 - The **Listen Queue** list is ordered by counterfactual impact — listen top-first.

@@ -21,18 +21,31 @@ Plus Trello's built-in **Inbox**, where Jay drops links throughout the week.
 
 ```mermaid
 flowchart TD
-    Jay(["Jay drops a link, anytime"]) --> Inbox["Trello Inbox"]
-    Inbox -->|"weekly job collects"| TBP["To Be Processed"]
-    TBP -->|"read link · summarize · classify"| Route{"Route by type<br/>+ rank by counterfactual impact"}
-    Route --> S1["System 1 · light reading"]
-    Route --> S2["System 2 · deep reading"]
+    Jay(["Jay drops links + todos, anytime"]) --> Inbox["Trello Inbox"]
+    Inbox -->|"PHASE 1 · triage read-vs-do"| Split{"reading material<br/>or todo?"}
+    Split -->|"todo / action"| Stay["stays in Inbox"]
+    Split -->|"reading material"| TBP["To Be Processed"]
+    TBP -->|"Jay reviews · drags back any mistakes"| Ready["▶ Ready to Process"]
+    Ready -->|"PHASE 2 · enrich · classify · rank"| Route{"route by type<br/>+ rank by impact"}
+    Route --> S1["System 1 · light"]
+    Route --> S2["System 2 · deep"]
     Route --> LO["Life Optimization"]
     S1 --> Q[["Listen Queue<br/>top ~20h, impact-ordered"]]
     LO --> Q
-    S2 -.->|"not queued — needs focus"| RO["stays read-only on the board"]
+    S2 -.->|"not queued — needs focus"| RO["read-only on the board"]
     Q -->|"text-to-speech"| Feed(["🎧 Private podcast feed"])
     Feed -->|"listen top-first, archive when done"| Jay
 ```
+
+The Inbox is a mix of reading links **and** todos, so collection happens in **two
+phases with a review checkpoint in between**:
+
+- **Phase 1 (automatic)** — triage each Inbox card *read vs do*; move only the
+  **reading material** into **To Be Processed**. Todos/notes stay in the Inbox.
+- **You review** To Be Processed and drag any keepers into **▶ Ready to Process**
+  (and drag mistakes back to the Inbox). This drag is the "go" button for Phase 2.
+- **Phase 2 (triggered)** — drains ▶ Ready to Process: enrich, classify, rank into the
+  three lists, top up the queue, publish. It runs as a poller, idle when the list is empty.
 
 For each card the system:
 
@@ -68,8 +81,13 @@ cached so re-runs are nearly free.
 - **One-time sort** — rank the three existing reading lists by counterfactual impact
   and reorder them in place (with a per-card note explaining the rank). Safe by default:
   it shows a proposed order first and only reorders the board when told to apply.
-- **Weekly automation** — collect the Inbox → route + rank each new card → top up the
-  20-hour listen queue → publish the podcast.
+- **Ongoing intake (two phases)** — **Phase 1** triages the Inbox and moves reading
+  material to *To Be Processed* for your review; **Phase 2** (triggered when you drag
+  cards into *▶ Ready to Process*) routes + ranks them, tops up the queue, and publishes.
+
+Both run as scheduled jobs; every board-mutating step is dry-run by default and only
+acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`,
+`run_phase1.sh`, `run_phase2.sh`).
 
 ## Where things live
 

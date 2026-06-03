@@ -84,6 +84,12 @@ run) → review → `--apply`.
   measured audio seconds (mutagen) drive the *20h queue* math.
 - **Delivery:** podcast RSS on Cloudflare R2 (zero egress). "Private" = unlisted +
   unguessable UUID path prefix.
+- **Two-phase intake** (Inbox mixes reading links with todos): **Phase 1** (`triage.py`
+  + `pipelines/phase1.py`) classifies each Inbox card read-vs-do (cheap Haiku, title/URL
+  only) and moves only reading material → `To Be Processed` (todos stay in Inbox; title
+  only, no markers). Jay reviews, then drags keepers into `▶ Ready to Process`. **Phase 2**
+  (`pipelines/phase2.py`) drains that list → enrich → route+rank+markers → queue → publish.
+  Both dry-run by default; Phase 2 is a poller (no-op when the trigger list is empty).
 
 ## Key facts & IDs
 
