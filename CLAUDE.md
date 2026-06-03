@@ -80,8 +80,14 @@ run) → review → `--apply`.
   text → ~5× cheaper. Everything cached in SQLite (resumable, near-free re-runs).
 - **Comparator:** Sonnet 4.6, escalating genuinely-close calls (step≥6) to Opus 4.8.
   Profile doc is prompt-cached across all calls.
-- **TTS:** Kokoro local (pluggable to OpenAI/Fish/Qwen). Reading-time drives *ranking*;
+- **TTS:** Kokoro local for Mac runs; **Google Cloud Neural2** chosen for cloud hosting
+  (pluggable: `get_engine("kokoro"|"openai"|"google")`). Reading-time drives *ranking*;
   measured audio seconds (mutagen) drive the *20h queue* math.
+- **Deployment direction (decided, not yet built):** move off the Mac to **Cloudflare
+  Containers** (Worker webhook+cron → Container) so nothing dies when the Mac is off.
+  Plan + the state-persistence gotcha (SQLite cache + audio must move to R2) in
+  `reports/deploy-cloudflare.md`. Until then, the buttons run via the local server +
+  `trigger.chojeq.com` Cloudflare tunnel (ephemeral; for testing).
 - **Delivery:** podcast RSS on Cloudflare R2 (zero egress). "Private" = unlisted +
   unguessable UUID path prefix.
 - **Two-phase intake** (Inbox mixes reading links with todos): **Phase 1** (`triage.py`
