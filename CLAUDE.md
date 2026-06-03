@@ -18,6 +18,13 @@ Two jobs:
    3 lists (impact-ranked via pairwise insertion) → keep a ≥20h TTS listen queue topped
    up → publish a podcast RSS feed. He listens top-first and archives when done.
 
+## Latest (2026-06-02 → 03)
+**See `reports/MORNING-HANDOFF.md`.** Two-phase intake live (Phase 1 button works);
+System 1/2/Life-Optim sorted in place (before-copies on board); a ~3h Kokoro listen
+queue + podcast feed built overnight; Google Neural2 TTS engine + full Cloudflare
+Containers deploy scaffolding + cache↔R2 durability all committed (114 tests). Next:
+deploy off the Mac — needs Jay's GCP key + Workers Paid (`reports/deploy-steps.md`).
+
 ## Status (overnight build, 2026-06-01)
 
 - Plan: `reports/2026-06-01-counterfactual-podcast-plan.md` (reviewer-approved, 18 tasks).
