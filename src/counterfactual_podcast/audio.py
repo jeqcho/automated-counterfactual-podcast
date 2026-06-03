@@ -92,7 +92,8 @@ def synthesize_card(
     if engine is None:
         engine = get_engine()
 
-    engine.synthesize(text, out_path)
+    # Cap per-card audio (bounds clip length + synth time; ~18k chars ≈ ~18 min).
+    engine.synthesize(text[: config.AUDIO_TEXT_CAP_CHARS], out_path)
 
     seconds = audio_duration_seconds(out_path)
     asset = AudioAsset(

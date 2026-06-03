@@ -68,7 +68,7 @@ class KokoroEngine:
 
         # Kokoro caps each call at 510 phoneme tokens; keep chunks small (chars are a
         # rough proxy) and rely on _synth_chunk_safe to split any that still overflow.
-        chunks = chunk_text(text, max_chars=350)
+        chunks = chunk_text(text, max_chars=400)
         if not chunks:
             chunks = [""]
 
