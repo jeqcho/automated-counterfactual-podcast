@@ -47,17 +47,22 @@ All 18 plan tasks implemented + tested. **91 unit tests passing** (all LLM/netwo
   for a 20h queue). Model at `data/kokoro-v1.0.onnx` (+voices). Needs `pydub` + ffmpeg.
 - **RSS**: valid podcast feed generated locally, ordered items, correct enclosure URLs.
 - **R2**: upload/read/delete verified; public r2.dev GET still 403 (needs Allow Access).
-- **yield report** (free, no-LLM sweep over all 351 System1+LifeOptim cards):
-  **246 extractable / 105 unreadable → ~91.7 audio-hours** of clean text, so the 20h
-  queue is reachable with ~4.5× headroom. Unreadable = 30 hard sources (X/YT/paywall),
-  **73 RuntimeError**, 2 HTTPError. `outputs/yield_report.json`.
+- **yield report** (free, no-LLM sweep over 351 System1+LifeOptim cards), after the
+  browser-UA extraction fix: **287 extractable / 64 unreadable → ~105.2 audio-hours**
+  (was 246 / ~91.7h before the fix recovered 41 cards). 20h queue reachable ~5× over.
+  Remaining unreadable = 30 hard sources (X/YT/paywall) + 32 redirect/JS/paywall +
+  2 malformed. `outputs/yield_report.json`.
 
-### Known follow-ups (not blocking)
-- **73 cards fail extraction with RuntimeError** (~21%). Likely trafilatura/fetch edge
-  cases; recovering them would raise the 91.7h further. Investigate `extract._default_fetch`
-  error handling and the per-card notes in `outputs/yield_report.json`.
-- R2 public r2.dev access still 403 (needs the Cloudflare "Allow Access" toggle).
-- Listen-queue full-reorder may move an in-progress top item; revisit if it bothers Jay.
+### Resolved / known follow-ups
+- ✅ **R2 public hosting works.** The earlier "403" was a false alarm — Cloudflare
+  r2.dev blocks default library user-agents; a browser UA returns 200. Podcast apps
+  (real UAs) fetch fine. No toggle was actually missing.
+- ✅ **Extraction UA fix:** trafilatura's default UA was blocked by ~21% of sites; now
+  `extract._default_fetch` fetches via requests with a browser UA then trafilatura-parses
+  the HTML. Recovered 41 cards. (Same bot-protection class as the R2 finding.)
+- Remaining 32 RuntimeError cards are real paywalls / tracking redirects / JS-only —
+  low ROI to chase. Listen-queue full-reorder may move an in-progress top item; revisit
+  if it bothers Jay.
 
 ### Constraint honored
 NO board mutations and NO real 623-card sort were run. The real sort waits for the
