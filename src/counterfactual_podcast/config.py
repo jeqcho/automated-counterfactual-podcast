@@ -56,7 +56,11 @@ R2_PUBLIC_BASE = os.environ.get("R2_PUBLIC_BASE")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")               # comparator workhorse
 CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-4-8")  # close calls (step>=6)
 CLAUDE_MODEL_DIGEST = os.environ.get("CLAUDE_MODEL_DIGEST", "claude-haiku-4-5-20251001")  # enrichment digests
-MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "12"))
+MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "50"))     # concurrent Anthropic calls
+MAX_FETCH_CONCURRENCY = int(os.environ.get("MAX_FETCH_CONCURRENCY", "50"))  # concurrent URL fetches (threads)
+# Hard cap on article text sent to Haiku per digest — bounds worst-case cost so one
+# giant page can't blow up spend. 24000 chars ≈ 6k tokens ≈ ~$0.006/card on Haiku.
+DIGEST_TEXT_CAP_CHARS = int(os.environ.get("DIGEST_TEXT_CAP_CHARS", "24000"))
 
 # --- TTS ------------------------------------------------------------------
 TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")

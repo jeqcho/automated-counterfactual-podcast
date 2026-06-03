@@ -13,6 +13,7 @@ call, so they can still be ranked in-list (just excluded from the listen queue l
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from . import config
 from .cache import Cache
@@ -27,17 +28,18 @@ DIGEST_INSTRUCTIONS = (
     "No preamble, no markdown headers — just the digest."
 )
 
-_TEXT_CAP_CHARS = 24000  # ~6k tokens, keeps long PDFs from blowing cost
-
-
 class Enricher:
     def __init__(self, client=None, cache: Cache | None = None,
                  profile_doc: str | None = None, model: str | None = None,
-                 concurrency: int | None = None, extract_fn=None):
+                 concurrency: int | None = None, extract_fn=None,
+                 fetch_concurrency: int | None = None):
         self.cache = cache
         self.model = model or config.CLAUDE_MODEL_DIGEST
         self.extract_fn = extract_fn or default_extract
         self._sem = asyncio.Semaphore(concurrency or config.MAX_LLM_CONCURRENCY)
+        # blocking URL fetches run in a thread pool so they parallelize too
+        self._fetch_pool = ThreadPoolExecutor(
+            max_workers=fetch_concurrency or config.MAX_FETCH_CONCURRENCY)
         if profile_doc is not None:
             self.profile_doc = profile_doc
         else:
@@ -58,7 +60,7 @@ class Enricher:
                      "cache_control": {"type": "ephemeral"}},
                 ],
                 messages=[{"role": "user",
-                           "content": f"Title: {title}\n\n{text[:_TEXT_CAP_CHARS]}"}],
+                           "content": f"Title: {title}\n\n{text[:config.DIGEST_TEXT_CAP_CHARS]}"}],
             )
         for block in getattr(resp, "content", []) or []:
             t = getattr(block, "text", None)
@@ -76,7 +78,9 @@ class Enricher:
         if self.cache is not None:
             ec = self.cache.get_extracted(card.id)
         if ec is None:
-            ec = self.extract_fn(card)
+            # run the blocking fetch/parse in the thread pool so fetches parallelize
+            ec = await asyncio.get_event_loop().run_in_executor(
+                self._fetch_pool, self.extract_fn, card)
             if self.cache is not None:
                 self.cache.put_extracted(ec)
 
