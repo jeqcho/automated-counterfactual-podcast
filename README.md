@@ -19,30 +19,19 @@ Plus Trello's built-in **Inbox**, where Jay drops links throughout the week.
 
 ## What happens to a card
 
-```
-            ┌─────────────┐
-   Jay  ──▶ │   Inbox     │   (drop a link anytime)
-            └──────┬──────┘
-                   │  weekly job
-                   ▼
-            ┌─────────────────┐
-            │ To Be Processed │   collected from the Inbox
-            └──────┬──────────┘
-                   │  read the link, summarize, decide
-                   ▼
-     ┌─────────────┴───────────────┐
-     ▼             ▼                ▼
- System 1      System 2       Life Optimization      ← routed by type,
- (inserted at its impact rank within the list)         ranked by impact
-     │                              │
-     └──────────────┬───────────────┘
-                    │  (System 2 excluded — needs focused reading)
-                    ▼
-            ┌─────────────┐
-            │ Listen Queue│   top ~20h of highest-impact, readable cards
-            └──────┬──────┘     each turned into audio (text-to-speech)
-                   ▼
-            🎧 Private podcast feed  →  Jay listens top-first, archives when done
+```mermaid
+flowchart TD
+    Jay(["Jay drops a link, anytime"]) --> Inbox["Trello Inbox"]
+    Inbox -->|"weekly job collects"| TBP["To Be Processed"]
+    TBP -->|"read link · summarize · classify"| Route{"Route by type<br/>+ rank by counterfactual impact"}
+    Route --> S1["System 1 · light reading"]
+    Route --> S2["System 2 · deep reading"]
+    Route --> LO["Life Optimization"]
+    S1 --> Q[["Listen Queue<br/>top ~20h, impact-ordered"]]
+    LO --> Q
+    S2 -.->|"not queued — needs focus"| RO["stays read-only on the board"]
+    Q -->|"text-to-speech"| Feed(["🎧 Private podcast feed"])
+    Feed -->|"listen top-first, archive when done"| Jay
 ```
 
 For each card the system:
