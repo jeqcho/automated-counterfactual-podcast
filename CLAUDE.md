@@ -90,6 +90,12 @@ run) → review → `--apply`.
   only, no markers). Jay reviews, then drags keepers into `▶ Ready to Process`. **Phase 2**
   (`pipelines/phase2.py`) drains that list → enrich → route+rank+markers → queue → publish.
   Both dry-run by default; Phase 2 is a poller (no-op when the trigger list is empty).
+- **Trello buttons (Jay buying Premium):** Butler HTTP requests (Premium) let two board
+  buttons POST to a local FastAPI **trigger server** (`server.py`, `/phase1` + `/phase2`,
+  `X-Trigger-Token` auth), exposed to Trello via a **Cloudflare Tunnel**. Button press →
+  runs the phase `--apply`. Setup: `reports/trigger-setup.md`. (Free-plan fallback was
+  Butler card-moves + a poller; native Inbox isn't reachable by Butler, so a Phase-1
+  button needs either Premium-HTTP or links in a board list.)
 
 ## Key facts & IDs
 
