@@ -42,21 +42,41 @@ class KokoroEngine:
         samples, sample_rate = model.create(text, voice=self.voice)
         return samples, sample_rate
 
+    def _synth_chunk_safe(self, text: str):
+        """Synthesize a chunk; if it exceeds Kokoro's 510-token limit (IndexError),
+        recursively split on whitespace and concatenate. Guarantees we never exceed
+        the model's per-call cap regardless of phoneme density."""
+        import numpy as np  # lazy
+        try:
+            samples, sr = self._synth_chunk(text)
+            return np.asarray(samples, dtype=np.float32), sr
+        except Exception:
+            if len(text) <= 60:
+                raise
+            mid = len(text) // 2
+            sp = text.rfind(" ", 0, mid)
+            sp = sp if sp > 0 else mid
+            s1, sr = self._synth_chunk_safe(text[:sp])
+            s2, _ = self._synth_chunk_safe(text[sp:].lstrip())
+            return np.concatenate([s1, s2]), sr
+
     def synthesize(self, text: str, out_path: Path) -> Path:
         import numpy as np  # lazy
 
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        chunks = chunk_text(text)
+        # Kokoro caps each call at 510 phoneme tokens; keep chunks small (chars are a
+        # rough proxy) and rely on _synth_chunk_safe to split any that still overflow.
+        chunks = chunk_text(text, max_chars=350)
         if not chunks:
             chunks = [""]
 
         pieces = []
         sample_rate = 24000  # Kokoro default; overwritten by first real chunk
         for chunk in chunks:
-            samples, sample_rate = self._synth_chunk(chunk)
-            pieces.append(np.asarray(samples, dtype=np.float32))
+            samples, sample_rate = self._synth_chunk_safe(chunk)
+            pieces.append(samples)
 
         audio = (
             np.concatenate(pieces)
