@@ -46,7 +46,8 @@ def collect_inbox(
     cards = client.get_cards(src)
     moved: list[Card] = []
     for card in cards:
-        client.move_card(card.id, dest, pos="bottom")
+        # cross-board move: native Inbox (hidden board) -> Home base list
+        client.move_card(card.id, dest, pos="bottom", board_id=config.BOARD_ID)
         card.list_id = dest
         moved.append(card)
     return moved

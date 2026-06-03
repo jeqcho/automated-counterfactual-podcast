@@ -35,7 +35,7 @@ class FakeClient:
     def get_cards(self, list_id):
         return list(self._cards.get(list_id, []))
 
-    def move_card(self, card_id, list_id, pos="bottom"):
+    def move_card(self, card_id, list_id, pos="bottom", board_id=None):
         self.move_calls.append((card_id, list_id, pos))
 
 

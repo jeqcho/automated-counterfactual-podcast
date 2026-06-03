@@ -22,7 +22,7 @@ class FakeClient:
             return list(self._inbox)
         return list(self.existing.get(list_id, []))
 
-    def move_card(self, card_id, list_id, pos="bottom"):
+    def move_card(self, card_id, list_id, pos="bottom", board_id=None):
         self.moved.append((card_id, list_id))
 
     def set_rank_marker(self, card, rank, est, why):

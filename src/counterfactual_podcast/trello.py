@@ -151,10 +151,14 @@ class TrelloClient:
     def archive_card(self, card_id: str):
         return self._request("PUT", f"/1/cards/{card_id}", closed="true")
 
-    def move_card(self, card_id: str, list_id: str, pos="bottom"):
-        return self._request(
-            "PUT", f"/1/cards/{card_id}", idList=list_id, pos=pos
-        )
+    def move_card(self, card_id: str, list_id: str, pos="bottom", board_id: str | None = None):
+        """Move a card to ``list_id``. For a CROSS-board move (e.g. out of the native
+        Inbox, which lives on a hidden board, into a Home base list) you must also pass
+        ``board_id`` — Trello rejects an idList that isn't on the card's current board."""
+        params = {"idList": list_id, "pos": pos}
+        if board_id:
+            params["idBoard"] = board_id
+        return self._request("PUT", f"/1/cards/{card_id}", **params)
 
     def add_label(self, card_id: str, label_id: str):
         return self._request(

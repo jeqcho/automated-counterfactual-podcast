@@ -27,7 +27,8 @@ async def run_phase1(client, triager, *, apply: bool = False, log=None) -> dict:
     for card, v in zip(cards, verdicts):
         if v["kind"] == "read":
             if apply:
-                client.move_card(card.id, dest, pos="bottom")
+                # cross-board move: native Inbox (hidden board) -> Home base list
+                client.move_card(card.id, dest, pos="bottom", board_id=config.BOARD_ID)
             moved.append({"card_id": card.id, "name": card.name, "why": v["why"]})
         else:
             kept.append({"card_id": card.id, "name": card.name, "why": v["why"]})
