@@ -6,6 +6,10 @@
   "name": "counterfactual-podcast",
   "main": "worker/index.js",
   "compatibility_date": "2026-06-01",
+  // Buttons hit the workers.dev URL directly (no custom domain / DNS dependency).
+  // trigger.chojeq.com custom-domain attach failed (DNS-record/zone conflict with the
+  // old tunnel) — revisit later if a pretty URL is wanted; workers.dev is the stable path.
+  "workers_dev": true,
 
   // The Container runs our FastAPI server (uvicorn on :8080). max_instances=1 reinforces
   // the singleton container the Worker addresses via idFromName("singleton") — so the

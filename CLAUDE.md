@@ -19,11 +19,41 @@ Two jobs:
    up → publish a podcast RSS feed. He listens top-first and archives when done.
 
 ## Latest (2026-06-02 → 03)
-**See `reports/MORNING-HANDOFF.md`.** Two-phase intake live (Phase 1 button works);
-System 1/2/Life-Optim sorted in place (before-copies on board); a ~3h Kokoro listen
-queue + podcast feed built overnight; Google Neural2 TTS engine + full Cloudflare
-Containers deploy scaffolding + cache↔R2 durability all committed (114 tests). Next:
-deploy off the Mac — needs Jay's GCP key + Workers Paid (`reports/deploy-steps.md`).
+## Latest (2026-06-14) — DEPLOYED to Cloudflare (off the Mac)
+
+The Worker + Container is **LIVE**: `https://counterfactual-podcast.chooijqweb.workers.dev`
+(`/health` → 200). All 11 secrets set via `wrangler secret put` (sourced from `.env` +
+the GCP key). Google Neural2 TTS validated live. Account = `chooijqweb@gmail.com`
+(Workers Paid on). Cron triggers REMOVED — phases run on demand via the Trello buttons.
+
+**The ONE remaining manual step:** point the two Trello Butler buttons at the workers.dev
+URL (not trigger.chojeq.com):
+- Phase 1 → `https://counterfactual-podcast.chooijqweb.workers.dev/phase1`
+- Phase 2 → `https://counterfactual-podcast.chooijqweb.workers.dev/phase2`
+each sending header `X-Trigger-Token: <TRIGGER_TOKEN from .env>`. First button press = the
+real end-to-end test (Phase 1 is cheap; Phase 2 builds the ~20h queue via Google TTS ≈ ~$17 once).
+
+**Deferred:** `trigger.chojeq.com` custom domain — the attach FAILED (Cloudflare API
+`/domains/records` error: the old cloudflared tunnel CNAME conflicts and/or the chojeq.com
+zone isn't on this account). Not chased; workers.dev is the stable path. The local
+`cloudflared` tunnel is already DOWN (trigger.chojeq.com returns 1033) and the local
+uvicorn server can be killed anytime (no longer in the loop).
+
+**Deploy gotchas fixed today (see git log):**
+- `worker/index.js`: the `@cloudflare/containers` `Container` base class starts the
+  container with **empty env** (`envVars = {}`) — it does NOT inherit Worker secrets. Must
+  forward them explicitly (FORWARD_ENV whitelist in the constructor) or every run fails
+  with no creds. `config._materialize_google_credentials()` writes `GOOGLE_CREDENTIALS_JSON`
+  → `/tmp/gcp-sa.json` on import (ADC).
+- Adding `routes`/`custom_domain` to wrangler.jsonc WITHOUT `workers_dev: true` **disables
+  the workers.dev URL** (broke reachability mid-deploy; restored by setting `workers_dev: true`).
+- Node side now set up: `package.json` pins `@cloudflare/containers ^0.3.7` + wrangler;
+  `npm install` before `wrangler deploy` (needs Docker running).
+
+## Earlier (2026-06-02 → 03) — see `reports/MORNING-HANDOFF.md`
+Two-phase intake live (Phase 1 button works); System 1/2/Life-Optim sorted in place
+(before-copies on board); a ~3h Kokoro listen queue + podcast feed built overnight; Google
+Neural2 TTS engine + full Cloudflare Containers deploy scaffolding + cache↔R2 durability.
 
 ## Status (overnight build, 2026-06-01)
 
