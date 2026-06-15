@@ -29,7 +29,7 @@
 | Board | `Home base` | `657f3741ecf6b2f7a40ef8df` | — |
 | Member | `chooijeqin` | `5a8056af894b0bfba8179ee4` | — |
 
-- **Classification context / rubric:** `private/jay-profile-for-article-classification.md` (contains both a scoring rubric and a **deterministic 7-step pairwise comparator** — we use the pairwise comparator).
+- **Classification context / rubric:** `private/jay-profile-for-article-classification.scoped.md` (pairwise-only, scoped to actual usage; the original draft + `.clean.md` intermediate were deleted once this was finalized).
 - **Listen queue top-up sources:** System 1 + Life Optimization only (System 2 excluded — needs focused reading).
 - **Out of scope:** `podcast`, `vids`, and the other 25 lists.
 - **Credentials present in gitignored `.env`:** `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ANTHROPIC_API_KEY`. (R2 + optional OpenAI keys added later.)
