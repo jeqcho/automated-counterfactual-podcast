@@ -1,0 +1,12 @@
+{
+  "name": "counterfactual-podcast-worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7"
+  },
+  "devDependencies": {
+    "wrangler": "^4.100.0"
+  }
+}

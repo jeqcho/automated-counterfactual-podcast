@@ -226,3 +226,4 @@ private/
 /data/*.pt
 /data/voices*
 .pytest_cache/
+node_modules/

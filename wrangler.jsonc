@@ -37,6 +37,13 @@
     }
   ],
 
+  // Non-secret vars (forwarded into the container by worker/index.js). PODCAST_PREFIX is
+  // privacy-sensitive (unguessable feed path) so it's a SECRET, not committed here.
+  "vars": {
+    "TTS_ENGINE": "google",
+    "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp-sa.json"
+  },
+
   // No cron triggers — both phases are invoked on demand via the Trello Butler buttons
   // (POST /phase1, /phase2 with X-Trigger-Token). Re-add a "crons" array here if you ever
   // want scheduled runs again; worker/index.js still has a scheduled() handler ready.

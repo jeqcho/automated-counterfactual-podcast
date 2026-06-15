@@ -17,9 +17,38 @@ import { Container, getContainer } from "@cloudflare/containers";
 // Stable name -> exactly one container instance for the whole app.
 const SINGLETON = "singleton";
 
+// The Container base class starts the container with an EMPTY env by default
+// (envVars = {}); it does NOT auto-inherit the Worker's vars/secrets. So we forward
+// exactly what the FastAPI app reads from os.environ. Without this the container boots
+// with no Trello/Anthropic/R2/Google creds and every run fails silently.
+const FORWARD_ENV = [
+  "TRELLO_API_KEY",
+  "TRELLO_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "R2_ACCOUNT_ID",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "R2_BUCKET",
+  "R2_PUBLIC_BASE",
+  "PODCAST_PREFIX",
+  "TRIGGER_TOKEN",
+  "TTS_ENGINE",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CREDENTIALS_JSON",
+];
+
 export class PodcastContainer extends Container {
   defaultPort = 8080;        // uvicorn listens on 8080 (see Dockerfile)
   sleepAfter = "10m";        // scale to zero after 10 min idle (cheap while idle)
+
+  constructor(ctx, env) {
+    super(ctx, env);
+    const vars = {};
+    for (const k of FORWARD_ENV) {
+      if (env[k] !== undefined && env[k] !== null) vars[k] = String(env[k]);
+    }
+    this.envVars = vars;     // injected into the container process at start
+  }
 
   onError(error) {
     console.error("PodcastContainer error:", error);
