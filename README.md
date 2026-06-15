@@ -92,6 +92,44 @@ Both run as scheduled jobs; every board-mutating step is dry-run by default and 
 acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`,
 `run_phase1.sh`, `run_phase2.sh`).
 
+## Architecture (deployed on Cloudflare, off the Mac)
+
+A Trello button press (or `/health` check) hits a Cloudflare **Worker**, which routes to a
+single **Container** (a Durable-Object-backed FastAPI app) that runs the whole pipeline and
+calls out to Trello, Anthropic, and Google TTS — with all durable state (the SQLite cache,
+audio, and the RSS feed) living in **R2**. The container scales to zero when idle, so nothing
+runs on, or depends on, the Mac.
+
+```mermaid
+flowchart LR
+    Jay(["Jay"])
+    Podcast["Podcast app"]
+
+    subgraph Trello["Trello — Home base board"]
+        Inbox["Inbox + 3 reading lists<br/>+ Listen Queue"]
+        Buttons["Butler buttons<br/>Phase 1 · Phase 2"]
+    end
+
+    subgraph CF["Cloudflare — runs off the Mac"]
+        Worker["Worker (workers.dev)<br/>/phase1 · /phase2 · /health"]
+        Container["Container · Durable Object (singleton)<br/>FastAPI + uvicorn :8080<br/>the pipeline · scales to zero when idle"]
+        R2[("R2<br/>cache.sqlite3 (durable state)<br/>audio MP3s · RSS feed")]
+    end
+
+    Anthropic["Anthropic API<br/>Haiku digests/triage<br/>Sonnet+Opus pairwise ranking"]
+    Google["Google Neural2<br/>text-to-speech"]
+
+    Jay -->|drops links · presses| Buttons
+    Buttons -->|POST + X-Trigger-Token| Worker
+    Worker -->|routes to singleton| Container
+    Container <-->|read lists · move cards · markers| Inbox
+    Container <-->|digests · pairwise compare| Anthropic
+    Container -->|synthesize audio| Google
+    Container <-->|pull/push state · upload audio + feed| R2
+    R2 -->|RSS feed + MP3 enclosures| Podcast
+    Podcast -->|listen top-first| Jay
+```
+
 ## Where things live
 
 - `src/counterfactual_podcast/` — the code (one focused module per stage).
