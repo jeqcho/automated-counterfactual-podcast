@@ -67,8 +67,9 @@ export default {
     const isPhase =
       request.method === "POST" && (path === "/phase1" || path === "/phase2");
     const isHealth = request.method === "GET" && path === "/health";
+    const isLogs = request.method === "GET" && path === "/logs";
 
-    if (!isPhase && !isHealth) {
+    if (!isPhase && !isHealth && !isLogs) {
       return new Response("not found", { status: 404 });
     }
 

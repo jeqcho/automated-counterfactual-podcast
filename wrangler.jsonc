@@ -23,7 +23,7 @@
       // "lite" (~256MB RAM, ~2GB disk, 1/16 vCPU) OOM/disk-crashed building the ~20h
       // queue (~1GB of MP3s accumulate before publish) and was painfully slow. "standard"
       // (~4GB RAM, ~4GB disk, 1/2 vCPU) has the headroom + ~8x the CPU.
-      "instance_type": "standard"
+      "instance_type": "standard-1"
     }
   ],
 
