@@ -19,8 +19,13 @@ import os
 from fastapi import FastAPI, Header, HTTPException
 
 from . import config
+from .logging_setup import enable_ring_capture, recent_logs
 
 app = FastAPI(title="Counterfactual Podcast Triggers")
+
+# Capture module-level loggers (per-card synth/enrich progress) into the ring buffer so
+# /logs reflects a full run even though Cloudflare doesn't surface container stdout.
+enable_ring_capture()
 
 _LOCKS = {"phase1": asyncio.Lock(), "phase2": asyncio.Lock()}
 
@@ -67,6 +72,18 @@ async def run_named(name: str) -> None:
 @app.get("/health")
 async def health():
     return {"ok": True, "running": {k: v.locked() for k, v in _LOCKS.items()}}
+
+
+@app.get("/logs")
+async def logs(n: int = 200, x_trigger_token: str | None = Header(default=None)):
+    """Recent pipeline log lines (token-protected) — the cloud's window into a run,
+    since Cloudflare doesn't pipe container stdout into `wrangler tail`."""
+    _check_token(x_trigger_token)
+    n = max(1, min(int(n), 1000))
+    return {
+        "running": {k: v.locked() for k, v in _LOCKS.items()},
+        "lines": recent_logs(n),
+    }
 
 
 @app.post("/phase1")

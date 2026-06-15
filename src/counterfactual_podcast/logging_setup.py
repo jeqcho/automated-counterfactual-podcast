@@ -8,14 +8,56 @@ existing handlers (no duplicates) and keeps the original `log_path`.
 """
 from __future__ import annotations
 
+import collections
 import logging
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from . import config
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+# --- In-process ring buffer of recent log lines ---------------------------
+# Cloudflare Containers don't surface stdout into `wrangler tail` (Worker-only), so
+# in the cloud the pipeline's progress is otherwise invisible. We tee every log record
+# into a bounded deque that the FastAPI server exposes via GET /logs — making any run
+# (local or cloud) observable over HTTP without depending on container-log plumbing.
+_RING_MAX = 1000
+_ring: collections.deque[str] = collections.deque(maxlen=_RING_MAX)
+_ring_lock = threading.Lock()
+
+
+class _RingBufferHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+        except Exception:  # noqa: BLE001 — logging must never raise
+            return
+        with _ring_lock:
+            _ring.append(msg)
+
+
+_ring_handler = _RingBufferHandler()
+_ring_handler.setLevel(logging.INFO)
+_ring_handler.setFormatter(logging.Formatter(_FORMAT))
+
+
+def recent_logs(n: int = 200) -> list[str]:
+    """Return the last ``n`` captured log lines (most recent last)."""
+    with _ring_lock:
+        return list(_ring)[-n:]
+
+
+def enable_ring_capture() -> None:
+    """Attach the ring-buffer handler to the root logger so module-level loggers
+    (e.g. audio/enrich per-card progress) are captured too. Idempotent."""
+    root = logging.getLogger()
+    if _ring_handler not in root.handlers:
+        if root.level > logging.INFO or root.level == logging.NOTSET:
+            root.setLevel(logging.INFO)
+        root.addHandler(_ring_handler)
 
 
 def setup_logging(name: str) -> logging.Logger:
@@ -48,6 +90,7 @@ def setup_logging(name: str) -> logging.Logger:
 
     logger.addHandler(console)
     logger.addHandler(file_handler)
+    logger.addHandler(_ring_handler)  # also tee into the HTTP-queryable ring buffer
 
     logger.log_path = log_path  # type: ignore[attr-defined]
     return logger

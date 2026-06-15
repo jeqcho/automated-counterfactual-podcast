@@ -31,7 +31,10 @@ COPY private/jay-profile-for-article-classification.scoped.md ./private/jay-prof
 RUN uv sync --extra google --no-dev --frozen
 
 # Default cloud config (overridable via wrangler vars/secrets):
-ENV TTS_ENGINE=google
+# PYTHONUNBUFFERED so stdout/stderr flush immediately to Cloudflare's container logs
+# (no block-buffering) — pairs with the /logs ring-buffer endpoint for run visibility.
+ENV TTS_ENGINE=google \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 8080
 

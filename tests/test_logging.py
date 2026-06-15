@@ -42,8 +42,8 @@ def test_setup_logging_does_not_duplicate_handlers():
     n_after_second = len(logger2.handlers)
     try:
         assert logger1 is logger2
-        # Exactly one console + one file handler, and no growth on re-call.
-        assert n_after_first == 2
+        # console + file + ring-buffer handler, and no growth on re-call.
+        assert n_after_first == 3
         assert n_after_second == n_after_first
 
         console_handlers = [

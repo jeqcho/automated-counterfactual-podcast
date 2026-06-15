@@ -33,6 +33,23 @@ def test_phase1_accepts_valid_token(client, monkeypatch):
     assert r.status_code == 200 and "started" in r.json()["status"]
 
 
+def test_logs_requires_token(client):
+    assert client.get("/logs").status_code == 401
+    assert client.get("/logs", headers={"X-Trigger-Token": "nope"}).status_code == 401
+
+
+def test_logs_returns_recent_lines(client):
+    from counterfactual_podcast.logging_setup import enable_ring_capture
+    import logging
+    enable_ring_capture()
+    logging.getLogger("counterfactual_podcast.test").info("hello-from-test-run")
+    r = client.get("/logs", headers={"X-Trigger-Token": "secret123"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "running" in body and isinstance(body["lines"], list)
+    assert any("hello-from-test-run" in line for line in body["lines"])
+
+
 async def test_run_named_invokes_runner(monkeypatch):
     called = {"n": 0}
 
