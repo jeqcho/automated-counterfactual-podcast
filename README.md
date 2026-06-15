@@ -94,7 +94,9 @@ acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`,
 
 ## Architecture (deployed on Cloudflare, off the Mac)
 
-A Trello button press (or `/health` check) hits a Cloudflare **Worker**, which routes to a
+Two Trello buttons drive it — *Extract readables* (Phase 1: triage the Inbox, move reading
+material to *To Be Processed*) and *Sort readables* (Phase 2: rank, top up the queue, publish).
+A press (or a `/health` check) hits a Cloudflare **Worker**, which routes to a
 single **Container** (a Durable-Object-backed FastAPI app) that runs the whole pipeline and
 calls out to Trello, Anthropic, and Google TTS — with all durable state (the SQLite cache,
 audio, and the RSS feed) living in **R2**. The container scales to zero when idle, so nothing
@@ -107,7 +109,8 @@ flowchart LR
 
     subgraph Trello["Trello — Home base board"]
         Inbox["Inbox + 3 reading lists<br/>+ Listen Queue"]
-        Buttons["Butler buttons<br/>Phase 1 · Phase 2"]
+        BtnExtract["Button: Extract readables<br/>(Phase 1 — triage Inbox,<br/>readables → To Be Processed)"]
+        BtnSort["Button: Sort readables<br/>(Phase 2 — rank · queue · publish)"]
     end
 
     subgraph CF["Cloudflare — runs off the Mac"]
@@ -119,8 +122,11 @@ flowchart LR
     Anthropic["Anthropic API<br/>Haiku digests/triage<br/>Sonnet+Opus pairwise ranking"]
     Google["Google Neural2<br/>text-to-speech"]
 
-    Jay -->|drops links · presses| Buttons
-    Buttons -->|POST + X-Trigger-Token| Worker
+    Jay -->|drops links| Inbox
+    Jay -->|press| BtnExtract
+    Jay -->|press| BtnSort
+    BtnExtract -->|POST /phase1 + token| Worker
+    BtnSort -->|POST /phase2 + token| Worker
     Worker -->|routes to singleton| Container
     Container <-->|read lists · move cards · markers| Inbox
     Container <-->|digests · pairwise compare| Anthropic
