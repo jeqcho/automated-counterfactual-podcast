@@ -94,45 +94,43 @@ acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`,
 
 ## Architecture (deployed on Cloudflare, off the Mac)
 
-Two Trello buttons drive it — *Extract readables* (Phase 1: triage the Inbox, move reading
-material to *To Be Processed*) and *Sort readables* (Phase 2: rank, top up the queue, publish).
-A press (or a `/health` check) hits a Cloudflare **Worker**, which routes to a
-single **Container** (a Durable-Object-backed FastAPI app) that runs the whole pipeline and
-calls out to Trello, Anthropic, and Google TTS — with all durable state (the SQLite cache,
-audio, and the RSS feed) living in **R2**. The container scales to zero when idle, so nothing
-runs on, or depends on, the Mac.
+Shared infra for both phases: a Trello button POSTs (with an `X-Trigger-Token`) to a
+Cloudflare **Worker**, which routes to a single **Container** (a Durable-Object-backed
+FastAPI app) that runs the pipeline and calls out to Trello, Anthropic, and Google TTS.
+All durable state (the SQLite cache, audio, RSS feed) lives in **R2**, and the container
+scales to zero when idle — so nothing runs on, or depends on, the Mac. The two buttons do
+quite different things:
+
+**Phase 1 — *Extract readables*** (lightweight triage; no audio). Pulls the reading links
+out of the Inbox and parks them for your review.
 
 ```mermaid
 flowchart LR
-    Jay(["Jay"])
-    Podcast["Podcast app"]
+    Jay(["Jay"]) -->|drops links + todos| Inbox["Trello Inbox"]
+    Jay -->|press| Btn["Button:<br/>Extract readables"]
+    Btn -->|POST /phase1 + token| Worker["CF Worker"]
+    Worker -->|routes to singleton| Container["Container<br/>(FastAPI pipeline)"]
+    Container <-->|read Inbox cards| Inbox
+    Container <-->|Haiku: read vs. do?| Anthropic["Anthropic<br/>(Haiku triage)"]
+    Container <-->|pull / push cache| R2[("R2 cache")]
+    Container -->|move readables| TBP["To Be Processed<br/>(Jay reviews)"]
+```
 
-    subgraph Trello["Trello — Home base board"]
-        Inbox["Inbox + 3 reading lists<br/>+ Listen Queue"]
-        BtnExtract["Button: Extract readables<br/>(Phase 1 — triage Inbox,<br/>readables → To Be Processed)"]
-        BtnSort["Button: Sort readables<br/>(Phase 2 — rank · queue · publish)"]
-    end
+**Phase 2 — *Sort readables*** (the full pipeline). After you drag reviewed cards into
+*▶ Ready to Process*, this ranks them, tops up the queue, synthesizes audio, and publishes.
 
-    subgraph CF["Cloudflare — runs off the Mac"]
-        Worker["Worker (workers.dev)<br/>/phase1 · /phase2 · /health"]
-        Container["Container · Durable Object (singleton)<br/>FastAPI + uvicorn :8080<br/>the pipeline · scales to zero when idle"]
-        R2[("R2<br/>cache.sqlite3 (durable state)<br/>audio MP3s · RSS feed")]
-    end
-
-    Anthropic["Anthropic API<br/>Haiku digests/triage<br/>Sonnet+Opus pairwise ranking"]
-    Google["Google Neural2<br/>text-to-speech"]
-
-    Jay -->|drops links| Inbox
-    Jay -->|press| BtnExtract
-    Jay -->|press| BtnSort
-    BtnExtract -->|POST /phase1 + token| Worker
-    BtnSort -->|POST /phase2 + token| Worker
-    Worker -->|routes to singleton| Container
-    Container <-->|read lists · move cards · markers| Inbox
-    Container <-->|digests · pairwise compare| Anthropic
-    Container -->|synthesize audio| Google
-    Container <-->|pull/push state · upload audio + feed| R2
-    R2 -->|RSS feed + MP3 enclosures| Podcast
+```mermaid
+flowchart LR
+    Jay(["Jay"]) -->|drag reviewed cards| Ready["▶ Ready to Process"]
+    Jay -->|press| Btn["Button:<br/>Sort readables"]
+    Btn -->|POST /phase2 + token| Worker["CF Worker"]
+    Worker -->|routes to singleton| Container["Container<br/>(FastAPI pipeline)"]
+    Container <-->|drain · route + rank · markers| Lists["System 1 / 2 / Life Optim"]
+    Container <-->|digests + pairwise rank| Anthropic["Anthropic<br/>(Haiku + Sonnet/Opus)"]
+    Container -->|top up| Queue["Listen Queue"]
+    Container -->|synthesize audio| Google["Google Neural2 TTS"]
+    Container <-->|cache · audio · feed| R2[("R2")]
+    R2 -->|RSS + MP3 enclosures| Podcast["Podcast app"]
     Podcast -->|listen top-first| Jay
 ```
 
