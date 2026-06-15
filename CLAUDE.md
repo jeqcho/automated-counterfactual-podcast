@@ -250,6 +250,13 @@ run) → review → `--apply`.
   token-protected `GET /logs` ring-buffer endpoint (also needs the Worker to whitelist the
   path — it 404s at the edge otherwise). Noisy httpx/anthropic loggers are raised to WARNING
   so /logs shows pipeline progress. `PYTHONUNBUFFERED=1` in the Dockerfile for CF logs too.
+- **Google TTS has a 5000-BYTE (not char) per-request hard limit.** `chunk_text` splits on
+  sentence bounds but emits one oversized chunk for a "sentence" with no `.!?` (long lists,
+  code, run-on paragraphs) → Google 400 `InvalidArgument` → **unhandled exception killed the
+  whole run mid-synth** (the *real* cause of the standard-1 "crash" — NOT reaping). Fixed:
+  `google_engine.byte_safe_chunks()` hard-splits any chunk over 4800 UTF-8 bytes (mirrors
+  Kokoro's `_synth_chunk_safe`). Also `listen_queue` now wraps per-card synth in try/except so
+  one bad card skips instead of crashing the run.
 - **First Phase-2 run is SLOW (~40 min) and uncached:** the queue does a combined
   System1+LifeOptim ranking needing **cross-list** comparisons never computed by the per-list
   sorts. Merge-sort comparisons are **sequential** (~1.3/s), so concurrency-50 doesn't help.

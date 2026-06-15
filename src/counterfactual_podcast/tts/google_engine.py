@@ -15,6 +15,34 @@ from pathlib import Path
 from .. import config
 from .base import chunk_text
 
+# Google TTS rejects any request whose input.text exceeds 5000 BYTES (not chars) with a
+# 400 InvalidArgument. chunk_text splits on sentence bounds but emits a single oversized
+# chunk for a "sentence" with no .!? terminator (long lists, code, run-on paragraphs), so
+# we must hard-cap by bytes too or one such card crashes the whole run.
+_MAX_BYTES = 4800  # safety margin under the 5000-byte hard limit
+
+
+def _split_to_bytes(s: str, max_bytes: int = _MAX_BYTES) -> list[str]:
+    """Recursively split ``s`` on whitespace until every piece's UTF-8 length <= max_bytes."""
+    s = s.strip()
+    if not s:
+        return []
+    if len(s.encode("utf-8")) <= max_bytes:
+        return [s]
+    mid = len(s) // 2
+    sp = s.rfind(" ", 0, mid)
+    sp = sp if sp > 0 else mid
+    return _split_to_bytes(s[:sp], max_bytes) + _split_to_bytes(s[sp:], max_bytes)
+
+
+def byte_safe_chunks(text: str, max_bytes: int = _MAX_BYTES) -> list[str]:
+    """Sentence-chunk, then hard-split any chunk still over the byte limit. Guarantees
+    every returned chunk encodes to <= max_bytes so Google never 400s."""
+    out: list[str] = []
+    for piece in chunk_text(text, max_chars=4000):
+        out.extend(_split_to_bytes(piece, max_bytes))
+    return out
+
 
 class GoogleEngine:
     name = "google"
@@ -47,7 +75,7 @@ class GoogleEngine:
     def synthesize(self, text: str, out_path: Path) -> Path:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        chunks = chunk_text(text, max_chars=4500) or [""]
+        chunks = byte_safe_chunks(text) or [""]
 
         if len(chunks) == 1:
             out_path.write_bytes(self._synth_chunk(chunks[0]))

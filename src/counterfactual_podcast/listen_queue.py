@@ -67,7 +67,13 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
         for f in ranked:
             if current >= target_sec:
                 break
-            asset = await synth(f)
+            try:
+                asset = await synth(f)
+            except Exception as e:  # noqa: BLE001 — one bad card must not kill the run
+                if log:
+                    log.warning(f"  skip synth {f.card_id} ({(f.title or '')[:40]}): "
+                                f"{type(e).__name__}: {e}")
+                continue
             if asset is None:
                 continue
             client.move_card(f.card_id, queue_id, pos="bottom")
