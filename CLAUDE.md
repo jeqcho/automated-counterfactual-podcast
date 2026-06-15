@@ -226,6 +226,47 @@ run) → review → `--apply`.
   — caught by the overnight live smoke test. Some cards attach a trello.com-hosted PDF
   whose download needs auth → 401 → gracefully `ok=False` (excluded from TTS).
 
+### Cloud-deploy findings (2026-06-14 night) — hard-won, read before touching the deploy
+- **Container env is NOT inherited from the Worker.** `@cloudflare/containers` `Container`
+  defaults `envVars = {}`. You MUST forward secrets explicitly in the subclass constructor
+  (FORWARD_ENV whitelist in `worker/index.js`) or the FastAPI app boots with no creds.
+- **THE BIG ONE — never run the pipeline on the FastAPI event loop.** The pipeline does
+  blocking work (Trello HTTP with rate-limit `time.sleep`, SQLite, sort orchestration). On
+  the request loop it starves `/health` + `/logs` → the container stops answering → **Cloudflare
+  reaps the "unhealthy" container mid-run.** This (NOT OOM) caused the early "~38-min crashes".
+  Fix: `server.start_run()` runs each phase in a **daemon thread with its own asyncio loop**;
+  the request loop stays responsive. (If a future run still goes HTTP-silent under load, this
+  regressed.)
+- **`wrangler deploy` won't roll a new image onto a live singleton container.** With
+  `max_instances:1`, a running instance blocks the rollout; worse, a follow-up deploy diffs
+  against the *live* (un-rolled) image and silently re-pins the OLD image (the EDIT block shows
+  the image line with no `+/-`). Symptom: new code/`instance_type` never takes effect; image
+  stays the first tag. Fix that worked: change the Dockerfile (a unique `ENV CF_BUILD_MARKER`)
+  to force a NEW image digest → wrangler must push + EDIT the app image. Verify with
+  `wrangler containers info <app-id>` (check `image`, `vcpu`, `memory`).
+- **`instance_type`: `lite` (~256MB/2GB/0.0625vcpu) is too small** — OOM/disk + painfully slow.
+  Use `standard-1` (renamed from `standard`; ~4GB/8GB/0.5vcpu). Set in `wrangler.jsonc`.
+- **Container logs do NOT appear in `wrangler tail`** (Worker-only). Observe a run via the
+  token-protected `GET /logs` ring-buffer endpoint (also needs the Worker to whitelist the
+  path — it 404s at the edge otherwise). Noisy httpx/anthropic loggers are raised to WARNING
+  so /logs shows pipeline progress. `PYTHONUNBUFFERED=1` in the Dockerfile for CF logs too.
+- **First Phase-2 run is SLOW (~40 min) and uncached:** the queue does a combined
+  System1+LifeOptim ranking needing **cross-list** comparisons never computed by the per-list
+  sorts. Merge-sort comparisons are **sequential** (~1.3/s), so concurrency-50 doesn't help.
+  Once it completes + pushes cache to R2, future runs are cache-hit-fast. (Possible optimization:
+  MERGE the two already-sorted lists (~n cross-list comparisons) instead of a full re-sort
+  (~n log n) — check `listen_queue.ensure_listen_queue`.)
+- **Cache is keyed by card identity only** (`extracted`/`digest`/`audio` PK `card_id`,
+  `pairwise` PK `(a_id,b_id)`) — NO list/pos column. So moving cards between lists between
+  Phase 1 and Phase 2 never stales the cache; list membership/order is read LIVE from Trello.
+  NB: `pairwise` is NOT keyed by profile, so changing the profile doc does NOT invalidate
+  cached comparisons (would serve stale rankings — re-rank manually if the profile changes).
+- **Deploy state:** live at `https://counterfactual-podcast.chooijqweb.workers.dev`
+  (account `chooijqweb`). Buttons must point at `…workers.dev/phase1|/phase2` + `X-Trigger-Token`
+  (the `trigger.chojeq.com` custom-domain attach FAILED — DNS/zone conflict with the old
+  tunnel; deferred). Crons removed (button-triggered). Feed URL =
+  `{R2_PUBLIC_BASE}/{PODCAST_PREFIX}/rss.xml`.
+
 ## Pointers
 
 - `reports/2026-06-01-counterfactual-podcast-plan.md` — the implementation plan.
