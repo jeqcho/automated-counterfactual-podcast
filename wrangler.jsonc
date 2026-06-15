@@ -37,11 +37,11 @@
     }
   ],
 
-  // Cron schedule. event.cron is matched in worker/index.js scheduled():
-  //   "0 6 * * *" -> POST /phase1 (daily 06:00 UTC: build/rank, output to review list)
-  //   "0 * * * *" -> POST /phase2 (hourly: drain "Ready to Process" + top up queue)
+  // No cron triggers — both phases are invoked on demand via the Trello Butler buttons
+  // (POST /phase1, /phase2 with X-Trigger-Token). Re-add a "crons" array here if you ever
+  // want scheduled runs again; worker/index.js still has a scheduled() handler ready.
   "triggers": {
-    "crons": ["0 6 * * *", "0 * * * *"]
+    "crons": []
   },
 
   // ---------------------------------------------------------------------------
