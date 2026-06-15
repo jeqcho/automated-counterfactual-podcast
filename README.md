@@ -102,17 +102,28 @@ scales to zero when idle — so nothing runs on, or depends on, the Mac. The two
 quite different things:
 
 **Phase 1 — *Extract readables*** (lightweight triage; no audio). Pulls the reading links
-out of the Inbox and parks them for your review.
+out of the Inbox and parks them for your review. The **Worker, Container, and R2 all run on
+Cloudflare** (boxed below). R2 shows up even in this lightweight phase because the container
+scales to zero between runs, so it **pulls/pushes its SQLite cache to R2 around every run** —
+here that preserves the read-vs-do triage decisions so re-pressing the button is cheap. (That
+same cache also holds the expensive digests, comparisons, and audio that Phase 2 relies on.)
 
 ```mermaid
 flowchart LR
     Jay(["Jay"]) -->|drops links + todos| Inbox["Trello Inbox"]
     Jay -->|press| Btn["Button:<br/>Extract readables"]
-    Btn -->|POST /phase1 + token| Worker["CF Worker"]
-    Worker -->|routes to singleton| Container["Container<br/>(FastAPI pipeline)"]
+
+    subgraph CF["Cloudflare — runs off the Mac"]
+        Worker["Worker"]
+        Container["Container<br/>(FastAPI pipeline)<br/>scales to zero when idle"]
+        R2[("R2 cache<br/>triage results +<br/>shared durable state")]
+    end
+
+    Btn -->|POST /phase1 + token| Worker
+    Worker -->|routes to singleton| Container
     Container <-->|read Inbox cards| Inbox
     Container <-->|Haiku: read vs. do?| Anthropic["Anthropic<br/>(Haiku triage)"]
-    Container <-->|pull / push cache| R2[("R2 cache")]
+    Container <-->|"cache triage decisions<br/>(survives scale-to-zero)"| R2
     Container -->|move readables| TBP["To Be Processed<br/>(Jay reviews)"]
 ```
 
@@ -123,13 +134,20 @@ flowchart LR
 flowchart LR
     Jay(["Jay"]) -->|drag reviewed cards| Ready["▶ Ready to Process"]
     Jay -->|press| Btn["Button:<br/>Sort readables"]
-    Btn -->|POST /phase2 + token| Worker["CF Worker"]
-    Worker -->|routes to singleton| Container["Container<br/>(FastAPI pipeline)"]
+
+    subgraph CF["Cloudflare — runs off the Mac"]
+        Worker["Worker"]
+        Container["Container<br/>(FastAPI pipeline)<br/>scales to zero when idle"]
+        R2[("R2<br/>cache · audio · feed")]
+    end
+
+    Btn -->|POST /phase2 + token| Worker
+    Worker -->|routes to singleton| Container
     Container <-->|drain · route + rank · markers| Lists["System 1 / 2 / Life Optim"]
     Container <-->|digests + pairwise rank| Anthropic["Anthropic<br/>(Haiku + Sonnet/Opus)"]
     Container -->|top up| Queue["Listen Queue"]
     Container -->|synthesize audio| Google["Google Neural2 TTS"]
-    Container <-->|cache · audio · feed| R2[("R2")]
+    Container <-->|cache · audio · feed| R2
     R2 -->|RSS + MP3 enclosures| Podcast["Podcast app"]
     Podcast -->|listen top-first| Jay
 ```
