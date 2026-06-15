@@ -34,7 +34,8 @@ RUN uv sync --extra google --no-dev --frozen
 # PYTHONUNBUFFERED so stdout/stderr flush immediately to Cloudflare's container logs
 # (no block-buffering) — pairs with the /logs ring-buffer endpoint for run visibility.
 ENV TTS_ENGINE=google \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    CF_BUILD_MARKER=logs-2
 
 EXPOSE 8080
 
