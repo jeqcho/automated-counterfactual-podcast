@@ -50,9 +50,22 @@ def recent_logs(n: int = 200) -> list[str]:
         return list(_ring)[-n:]
 
 
+# Chatty third-party loggers that would otherwise drown the pipeline's own progress
+# lines in /logs (one INFO "HTTP Request" per Anthropic/Google/R2 call — thousands per run).
+_NOISY_LOGGERS = ("httpx", "httpcore", "anthropic", "urllib3", "boto3", "botocore",
+                  "s3transfer", "google", "openai")
+
+
+def quiet_noisy_loggers() -> None:
+    """Raise chatty HTTP-client loggers to WARNING so /logs shows pipeline progress."""
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def enable_ring_capture() -> None:
     """Attach the ring-buffer handler to the root logger so module-level loggers
     (e.g. audio/enrich per-card progress) are captured too. Idempotent."""
+    quiet_noisy_loggers()
     root = logging.getLogger()
     if _ring_handler not in root.handlers:
         if root.level > logging.INFO or root.level == logging.NOTSET:
