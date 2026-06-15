@@ -149,7 +149,12 @@ def _default_fetch(url: str) -> dict:
     if not html:
         raise RuntimeError(f"could not fetch {url}")
 
-    text = trafilatura.extract(html) or ""
+    # include_comments=False drops comment sections (WordPress/Disqus/etc) — without
+    # it trafilatura appends the entire comment thread, ballooning some articles to
+    # 10x their real length (e.g. an SSC post hit 551k chars = ~9h of audio of comments).
+    # favor_precision trims residual nav/boilerplate.
+    text = trafilatura.extract(html, include_comments=False,
+                               favor_precision=True) or ""
     title = ""
     try:
         meta = trafilatura.extract_metadata(html)

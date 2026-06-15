@@ -72,9 +72,11 @@ KOKORO_MODEL_PATH = os.environ.get("KOKORO_MODEL_PATH", str(DATA / "kokoro-v1.0.
 KOKORO_VOICES_PATH = os.environ.get("KOKORO_VOICES_PATH", str(DATA / "voices-v1.0.bin"))
 GOOGLE_TTS_VOICE = os.environ.get("GOOGLE_TTS_VOICE", "en-US-Neural2-D")
 GOOGLE_TTS_LANGUAGE = os.environ.get("GOOGLE_TTS_LANGUAGE", "en-US")
-# Cap audio per card: truncate text before TTS so no single article becomes an absurdly
-# long clip (and bounds synth time). ~18k chars ≈ ~18 min of audio.
-AUDIO_TEXT_CAP_CHARS = int(os.environ.get("AUDIO_TEXT_CAP_CHARS", "18000"))
+# NB: no per-card text cap — we synthesize the FULL article (one article = one episode).
+# Comment sections are stripped at extraction (extract.py) so length stays sane; speed
+# comes from a fast TTS provider, not from truncating content.
+# ONNX execution provider for Kokoro (Apple Silicon: CoreML is much faster than CPU).
+KOKORO_ONNX_PROVIDER = os.environ.get("KOKORO_ONNX_PROVIDER", "")
 
 
 def ensure_dirs() -> None:

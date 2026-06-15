@@ -51,7 +51,10 @@ For each card the system:
 
 1. **Reads the link.** Pulls the article text behind the card (the URL is stored as a
    Trello attachment). PDFs, articles, and plain text all work; paywalled/X/YouTube
-   links are flagged as "can't read" and skipped for audio.
+   links are flagged as "can't read" and skipped for audio. **Comment sections are
+   stripped** during extraction — without this, a blog post's comment thread gets read
+   aloud too (one SSC post ballooned to 551k chars / ~9h of audio that was 91% comments).
+   The full *article* is always kept, just not the comments below it.
 2. **Summarizes it** into a short, impact-focused digest (via a cheap LLM pass), and
    estimates reading time from the word count.
 3. **Decides which list** it belongs to — System 1, System 2, or Life Optimization.

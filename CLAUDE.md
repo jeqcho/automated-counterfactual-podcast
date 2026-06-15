@@ -161,6 +161,31 @@ run) → review → `--apply`.
   input; cost was dominated by article text → hence the digest pre-pass.
 - Kokoro-82M was #1 on TTS Arena (Jan 2026); good for long-form. Needs `ffmpeg`
   (system prereq) for WAV→MP3.
+- **Kokoro speed (2026-06-14, M-series Mac, benchmarked `scripts/bench_kokoro.py`):**
+  plain **CPU sequential is the fastest viable config at ~2.7–3.9× real-time** (variance
+  is thermal/load). So **10h of audio ≈ ~3.3h of CPU synth on the Mac** (10h ÷ 3×). Two
+  dead ends, both tested + ruled out — don't re-try:
+  - **CoreML provider is SLOWER (2.24× vs CPU 2.68×)** — the kokoro ONNX graph fragments
+    into **129 CoreML partitions** (only 1023 of 2256 nodes supported), so CPU↔ANE handoff
+    overhead dominates. (Set via `ONNX_PROVIDER` env / `KOKORO_ONNX_PROVIDER` config knob,
+    left as an escape hatch but default empty = CPU.)
+  - **Parallel chunk synthesis is BROKEN** — Kokoro's espeak phonemizer has global state
+    and is NOT thread-safe; concurrent `model.create()` corrupts it (`RuntimeError: number
+    of lines in input and output must be equal`). Keep synth sequential per process.
+  - The earlier "synth was crawling" was NOT the provider — it was (1) comment-bloated
+    extractions (one SSC post = 551k chars = ~51h of audio of comments) and (2) over-small
+    chunks. Both fixed (see comment-stripping below + chunk 350→400). No engine change needed.
+- **NO per-card text cap** — we synthesize the FULL article (one article = one episode,
+  however long). Jay's explicit call: don't prematurely cut content; speed comes from the
+  provider + comment-stripping, not truncation. (Removed `AUDIO_TEXT_CAP_CHARS`.)
+- **Comment sections are stripped at extraction** — `extract.py` calls
+  `trafilatura.extract(html, include_comments=False, favor_precision=True)`. Default
+  `include_comments=True` appended entire WordPress/Disqus threads (SSC "Outgroup" post:
+  551k→50.5k chars, 91% was comments). NOTE: extractions cached BEFORE 2026-06-14 still
+  hold the bloated text — re-extract comment-heavy cards before building a queue.
+- **Off-Mac TTS = Google Neural2** (cloud, API-bound not compute-bound): 10h of audio ≈
+  ~540k chars ≈ ~106 requests (5k chars each), parallelized → **minutes**, ~$30/mo at
+  10h/wk ($16/M chars after 1M free/mo). Mac/Kokoro = free but ~3.3h CPU + Mac must stay awake.
 - R2: S3 endpoint = `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto`.
   Public reads require enabling the **r2.dev subdomain** ("Allow Access") in bucket
   settings — uploads work without it but public GET 403s until enabled.

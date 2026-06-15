@@ -92,8 +92,9 @@ def synthesize_card(
     if engine is None:
         engine = get_engine()
 
-    # Cap per-card audio (bounds clip length + synth time; ~18k chars ≈ ~18 min).
-    engine.synthesize(text[: config.AUDIO_TEXT_CAP_CHARS], out_path)
+    # Synthesize the FULL article — no truncation. One article = one episode, however
+    # long. (Speed comes from a fast TTS provider, not from cutting content.)
+    engine.synthesize(text, out_path)
 
     seconds = audio_duration_seconds(out_path)
     asset = AudioAsset(
