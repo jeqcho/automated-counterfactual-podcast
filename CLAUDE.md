@@ -18,20 +18,51 @@ Two jobs:
    3 lists (impact-ranked via pairwise insertion) → keep a ≥20h TTS listen queue topped
    up → publish a podcast RSS feed. He listens top-first and archives when done.
 
-## Latest (2026-06-02 → 03)
-## Latest (2026-06-14) — DEPLOYED to Cloudflare (off the Mac)
+## Latest (2026-06-15) — 🎧 PODCAST IS LIVE & WORKING (full cloud run succeeded)
 
-The Worker + Container is **LIVE**: `https://counterfactual-podcast.chooijqweb.workers.dev`
-(`/health` → 200). All 11 secrets set via `wrangler secret put` (sourced from `.env` +
-the GCP key). Google Neural2 TTS validated live. Account = `chooijqweb@gmail.com`
-(Workers Paid on). Cron triggers REMOVED — phases run on demand via the Trello buttons.
+Phase 2 ran end-to-end on Cloudflare and **published a working 42-episode feed** (all 42
+enclosures fetch 200, ~20h of audio). The whole system is off the Mac and verified.
 
-**The ONE remaining manual step:** point the two Trello Butler buttons at the workers.dev
-URL (not trigger.chojeq.com):
-- Phase 1 → `https://counterfactual-podcast.chooijqweb.workers.dev/phase1`
-- Phase 2 → `https://counterfactual-podcast.chooijqweb.workers.dev/phase2`
-each sending header `X-Trigger-Token: <TRIGGER_TOKEN from .env>`. First button press = the
-real end-to-end test (Phase 1 is cheap; Phase 2 builds the ~20h queue via Google TTS ≈ ~$17 once).
+**Your feed URL (subscribe in Apple Podcasts → Mac → File → "Add a Show by URL"; syncs to iPhone):**
+```
+https://pub-cbe1a1411c65446c872416872b3c2403.r2.dev/4b1eb250c30c47558534e62b20620d25/rss.xml
+```
+
+**Your 2 remaining manual tasks:**
+1. **Subscribe** to the feed URL above.
+2. **Repoint the 2 Trello Butler buttons** to the workers.dev URLs (they still point at the
+   dead `trigger.chojeq.com` tunnel):
+   - Extract readables (Phase 1) → `https://counterfactual-podcast.chooijqweb.workers.dev/phase1`
+   - Sort readables (Phase 2) → `https://counterfactual-podcast.chooijqweb.workers.dev/phase2`
+   - header `X-Trigger-Token: <TRIGGER_TOKEN from .env>`.
+
+Worker LIVE at `https://counterfactual-podcast.chooijqweb.workers.dev` (account `chooijqweb`,
+Workers Paid). Container app `a03c203b…` on `standard-1`. 11 secrets set. Crons removed.
+Observe any run live with `curl -H "X-Trigger-Token: …" .../logs`.
+
+**Bugs found + fixed overnight (all committed; see git log + the gotchas section):**
+1. Container started with empty env (didn't inherit Worker secrets) → forward in worker/index.js.
+2. Pipeline blocked the event loop → container went HTTP-silent → Cloudflare reaped it →
+   run pipeline in a daemon thread (server.py). Also unstuck `/logs`.
+3. Google TTS 5000-byte limit crashed synth on run-on sentences → `byte_safe_chunks()`.
+4. `wrangler deploy` wouldn't roll a new image onto the live singleton → force new digest
+   (build marker) or, cleanest, `wrangler containers delete` + redeploy (fresh CREATE).
+5. `lite` instance OOM/too-slow → `standard-1`.
+6. PODCAST_PREFIX mismatch (.env `d922c67…` vs cloud secret `4b1eb250…`) → feed published at
+   the cloud's prefix; aligned `.env` to it. **The live feed is at `4b1eb250…`.**
+7. 19/42 episodes 404'd (old queue cards from the overnight LOCAL Kokoro run — audio never
+   reached R2) → `scripts/fix_missing_queue_audio.py` synthesized + uploaded them. All 42 play now.
+
+**Known follow-ups (NOT blocking; for when you're back):**
+- **Slow first ranking (~40 min):** `listen_queue.ensure_listen_queue` does a full `merge_sort`
+  of all ~340 candidates instead of MERGING the two already-sorted lists (~n cross-list
+  comparisons). Optimize to cut the first-run time ~8×. (Cached after, so reruns are faster.)
+- **Audio re-synthesized every cloud run:** `audio` cache stores LOCAL/container paths, which
+  never exist in a fresh container, so `synthesize_card` re-synths everything. Store the R2
+  key + check R2 existence to make audio truly durable across runs (saves $ + time).
+- **PODCAST_PREFIX:** root cause of the .env/cloud divergence unknown; .env now matches cloud.
+- **trigger.chojeq.com** custom domain still deferred (DNS/zone conflict); workers.dev works.
+- **Long episodes:** some are 50–67 min (no-truncation policy). Revisit splitting if you want.
 
 **Deferred:** `trigger.chojeq.com` custom domain — the attach FAILED (Cloudflare API
 `/domains/records` error: the old cloudflared tunnel CNAME conflicts and/or the chojeq.com
