@@ -53,12 +53,15 @@ Observe any run live with `curl -H "X-Trigger-Token: …" .../logs`.
    reached R2) → `scripts/fix_missing_queue_audio.py` synthesized + uploaded them. All 42 play now.
 
 **Known follow-ups (NOT blocking; for when you're back):**
-- **Slow first ranking (~40 min):** `listen_queue.ensure_listen_queue` does a full `merge_sort`
-  of all ~340 candidates instead of MERGING the two already-sorted lists (~n cross-list
-  comparisons). Optimize to cut the first-run time ~8×. (Cached after, so reruns are faster.)
-- **Audio re-synthesized every cloud run:** `audio` cache stores LOCAL/container paths, which
-  never exist in a fresh container, so `synthesize_card` re-synths everything. Store the R2
-  key + check R2 existence to make audio truly durable across runs (saves $ + time).
+- ✅ **DONE (2026-06-20) — Slow first ranking:** `ensure_listen_queue` now MERGES the two
+  already-sorted source lists via `sort.merge_presorted` (and merges existing-queue + added
+  for the final re-rank) instead of a full `merge_sort` — ~cross-list comparisons, ~8× fewer
+  sequential LLM calls on the first run.
+- ✅ **DONE (2026-06-20) — Audio re-synthesized every cloud run:** `synthesize_card(r2_check=)`
+  now reuses cached audio when the MP3 exists in R2 (`r2.make_audio_checker` head_objects
+  `{prefix}/{card_id}.mp3`), not just on local disk. `make_synth` wires it. Fresh containers
+  reuse R2 audio; only new episodes synth. (Caveat: changing synthesis logic — e.g. new
+  signposting — won't auto-invalidate; force a rebuild via `scripts/rebuild_podcast.py`.)
 - **PODCAST_PREFIX:** root cause of the .env/cloud divergence unknown; .env now matches cloud.
 - **trigger.chojeq.com** custom domain still deferred (DNS/zone conflict); workers.dev works.
 - **Long episodes:** some are 50–67 min (no-truncation policy). Revisit splitting if you want.
