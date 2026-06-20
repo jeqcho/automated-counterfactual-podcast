@@ -104,6 +104,15 @@ back-applied to the published 46-episode feed via `scripts/rebuild_podcast.py`:
 - One-off title backfill: `rebuild_podcast.py` rewrites url-ish cached titles (extracted +
   digest) from OG/renamed card names so legacy cache rows don't speak/show URLs on future runs.
 
+**Finished-episode workflow (decided 2026-06-20): feed is a QUEUE, not a library.** Jay
+listens top-down in Apple Podcasts (priority = newest pubDate). When done, he moves the card
+from `Listen Queue` → **`✓ Listened`** (a history list created on the board; archiving works
+too). Nothing auto-deletes — an episode only leaves the feed when its card leaves `Listen
+Queue` AND Phase 2 republishes. `episodes_for_queue` reads only the `Listen Queue` list, and
+the queue tops up from System1+LifeOptim, so a card in `✓ Listened` is both out of the feed
+and won't be re-queued — zero code needed. MP3s persist in R2 (orphaned, harmless; the feed
+just stops referencing them), so a feed could be rebuilt from history later if ever wanted.
+
 ## Earlier (2026-06-02 → 03) — see `reports/MORNING-HANDOFF.md`
 Two-phase intake live (Phase 1 button works); System 1/2/Life-Optim sorted in place
 (before-copies on board); a ~3h Kokoro listen queue + podcast feed built overnight; Google
