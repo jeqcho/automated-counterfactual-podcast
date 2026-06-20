@@ -256,14 +256,25 @@ run) → review → `--apply`.
   card.url`. Without this, every card fell back to title-only extraction (est_minutes=0)
   — caught by the overnight live smoke test. Some cards attach a trello.com-hosted PDF
   whose download needs auth → 401 → gracefully `ok=False` (excluded from TTS).
-- **Trello link previews require the URL to be an ATTACHMENT.** Cards added via the
-  Inbox / Chrome extension attach the URL → preview renders; cards whose link was pasted
-  into the title/desc have the URL as plain text → no preview. `scripts/fix_link_previews.py`
-  finds cards with a URL in name/desc but no http attachment (`card.url == ""`) and POSTs it
-  via `TrelloClient.add_attachment` (idempotent: a re-run skips cards that now have one;
-  dry-run by default, `--apply` to mutate). Ran 2026-06-20: 376 cards across System1/2 +
-  LifeOptim got previews, 0 failures. Purely additive — the pipeline already read the same URL
-  via `find_url(card) or card.url`, so rankings are unaffected.
+- **Trello "link preview" = a COVER IMAGE, not a URL attachment.** The cards that preview
+  (e.g. "Project Mario") are link cards: their NAME is the page title and the page's OG image
+  is uploaded as the card cover (`idAttachmentCover`) → thumbnail on the card front. A bare-URL
+  card (name = raw URL) shows no preview, and merely POSTing the URL as a *link* attachment does
+  NOT trigger the title/cover unfurl (a plain REST link attachment has `previews: 0`; Trello only
+  unfurls via the app/Chrome-extension create-from-link flow). Two scripts, run 2026-06-20,
+  both dry-run-by-default / `--apply`, both idempotent (re-runs skip already-fixed cards), both
+  write an undo manifest to `outputs/`:
+  - `scripts/fix_link_previews.py` (`TrelloClient.add_attachment`): attaches the article URL to
+    every card lacking an http attachment — 376 cards. Cosmetically it does little on its own, but
+    it makes the link reachable as an attachment so the *rename* below is safe.
+  - `scripts/fix_link_cards.py` (`set_name` + `upload_cover`): for each bare-URL card, fetches
+    og:title/og:image (parallel, browser UA), renames the card to the title, and uploads the OG
+    image as the cover. Result: 305 titles, 248 cover thumbnails; 61 skipped (paywall/bot-block
+    fetch fails like NYT/Science, or PDFs/mailing-list links with no OG). github.io etc. with no
+    og:image get a title but no thumbnail.
+  Renaming is safe because the URL now lives in the attachment — the pipeline reads it via
+  `find_url(card) or card.url`, so rankings are unaffected. `TrelloClient.upload_cover` is a
+  multipart POST (image bytes + `setCover=true`); a URL-only attachment can't be a cover.
 
 ### Cloud-deploy findings (2026-06-14 night) — hard-won, read before touching the deploy
 - **Container env is NOT inherited from the Worker.** `@cloudflare/containers` `Container`

@@ -160,6 +160,39 @@ class TrelloClient:
             params["idBoard"] = board_id
         return self._request("PUT", f"/1/cards/{card_id}", **params)
 
+    def set_name(self, card_id: str, name: str):
+        """Rename a card (used to replace a raw-URL name with the page title)."""
+        return self._request("PUT", f"/1/cards/{card_id}", name=name)
+
+    def upload_cover(self, card_id: str, data: bytes, filename: str, mimetype: str):
+        """Upload image bytes as an attachment and set it as the card cover.
+
+        This is what produces the thumbnail "link preview" on the card front
+        (a hosted image file, not a URL attachment). Multipart upload, so it
+        bypasses the params-only ``_request`` but reuses the throttle + auth."""
+        url = f"{API_BASE}/1/cards/{card_id}/attachments"
+        params = {"key": self.key, "token": self.token, "setCover": "true"}
+        delay = _DEFAULT_RETRY_AFTER
+        for _ in range(_MAX_TRIES):
+            self._throttle()
+            resp = self._session.post(
+                url, params=params,
+                files={"file": (filename, data, mimetype)},
+            )
+            if resp.status_code == 429:
+                ra = resp.headers.get("Retry-After")
+                try:
+                    wait = float(ra) if ra is not None else delay
+                except (TypeError, ValueError):
+                    wait = delay
+                self._sleep(wait)
+                delay *= 2
+                continue
+            resp.raise_for_status()
+            return resp.json() if resp.content else None
+        resp.raise_for_status()
+        return None
+
     def add_attachment(self, card_id: str, url: str):
         """Attach ``url`` to a card so Trello renders a rich link preview.
 

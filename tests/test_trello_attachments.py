@@ -51,3 +51,27 @@ def test_add_attachment_posts_url():
     assert req.method == "POST"
     assert "url=https%3A%2F%2Fexample.com%2Farticle" in req.url
     assert "key=k" in req.url and "token=t" in req.url
+
+
+@responses.activate
+def test_set_name_puts_name():
+    responses.add(responses.PUT, "https://api.trello.com/1/cards/c1",
+                  json={"id": "c1"}, status=200)
+    TrelloClient("k", "t", sleep=lambda *_: None).set_name("c1", "A Nice Title")
+    req = responses.calls[0].request
+    assert req.method == "PUT"
+    assert "name=A+Nice+Title" in req.url or "name=A%20Nice%20Title" in req.url
+
+
+@responses.activate
+def test_upload_cover_posts_multipart_with_setcover():
+    responses.add(responses.POST, "https://api.trello.com/1/cards/c1/attachments",
+                  json={"id": "img1"}, status=200)
+    out = TrelloClient("k", "t", sleep=lambda *_: None).upload_cover(
+        "c1", b"\xff\xd8\xffJPEGBYTES", "cover.jpg", "image/jpeg")
+    assert out["id"] == "img1"
+    req = responses.calls[0].request
+    assert req.method == "POST"
+    assert "setCover=true" in req.url
+    # the image bytes ride in the multipart body, not the query string
+    assert b"JPEGBYTES" in req.body
