@@ -35,3 +35,19 @@ def test_get_cards_pulls_url_from_attachment():
     )
     cards = TrelloClient("k", "t").get_cards("L1")
     assert cards[0].url == "https://example.com/article"
+
+
+@responses.activate
+def test_add_attachment_posts_url():
+    # Adding a URL as an attachment is what makes Trello render a link preview for
+    # cards whose link was pasted into the title/desc (instead of attached).
+    responses.add(
+        responses.POST, "https://api.trello.com/1/cards/c1/attachments",
+        json={"id": "att1", "url": "https://example.com/article"}, status=200,
+    )
+    out = TrelloClient("k", "t").add_attachment("c1", "https://example.com/article")
+    assert out["id"] == "att1"
+    req = responses.calls[0].request
+    assert req.method == "POST"
+    assert "url=https%3A%2F%2Fexample.com%2Farticle" in req.url
+    assert "key=k" in req.url and "token=t" in req.url

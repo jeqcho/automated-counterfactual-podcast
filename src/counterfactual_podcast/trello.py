@@ -160,6 +160,15 @@ class TrelloClient:
             params["idBoard"] = board_id
         return self._request("PUT", f"/1/cards/{card_id}", **params)
 
+    def add_attachment(self, card_id: str, url: str):
+        """Attach ``url`` to a card so Trello renders a rich link preview.
+
+        Cards whose link was pasted into the title/desc (vs. attached via the
+        Inbox/Chrome extension) have no attachment and therefore no preview;
+        POSTing the URL here makes Trello fetch + show the preview. Idempotency
+        is the caller's job (check the card has no http attachment first)."""
+        return self._request("POST", f"/1/cards/{card_id}/attachments", url=url)
+
     def add_label(self, card_id: str, label_id: str):
         return self._request(
             "POST", f"/1/cards/{card_id}/idLabels", value=label_id

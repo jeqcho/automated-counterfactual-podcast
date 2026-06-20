@@ -256,6 +256,14 @@ run) → review → `--apply`.
   card.url`. Without this, every card fell back to title-only extraction (est_minutes=0)
   — caught by the overnight live smoke test. Some cards attach a trello.com-hosted PDF
   whose download needs auth → 401 → gracefully `ok=False` (excluded from TTS).
+- **Trello link previews require the URL to be an ATTACHMENT.** Cards added via the
+  Inbox / Chrome extension attach the URL → preview renders; cards whose link was pasted
+  into the title/desc have the URL as plain text → no preview. `scripts/fix_link_previews.py`
+  finds cards with a URL in name/desc but no http attachment (`card.url == ""`) and POSTs it
+  via `TrelloClient.add_attachment` (idempotent: a re-run skips cards that now have one;
+  dry-run by default, `--apply` to mutate). Ran 2026-06-20: 376 cards across System1/2 +
+  LifeOptim got previews, 0 failures. Purely additive — the pipeline already read the same URL
+  via `find_url(card) or card.url`, so rankings are unaffected.
 
 ### Cloud-deploy findings (2026-06-14 night) — hard-won, read before touching the deploy
 - **Container env is NOT inherited from the Worker.** `@cloudflare/containers` `Container`
