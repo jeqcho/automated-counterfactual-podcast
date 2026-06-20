@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 from . import config
 from .models import Card, ExtractedContent
+from .titles import resolve_title
 
 # --- constants ------------------------------------------------------------
 
@@ -241,7 +242,7 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
     if is_hard(url):
         return _build(
             card_id=card.id,
-            title=card.name,
+            title=resolve_title([card.name], url),
             text=card.name,
             kind="hard",
             ok=False,
@@ -264,7 +265,7 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
                 raise RuntimeError("empty PDF text")
             return _build(
                 card_id=card.id,
-                title=card.name or result.get("title", ""),
+                title=resolve_title([card.name, result.get("title", "")], url),
                 text=text,
                 kind="pdf",
                 ok=True,
@@ -275,7 +276,7 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
             raise RuntimeError("empty extraction")
         return _build(
             card_id=card.id,
-            title=card.name or result.get("title", ""),
+            title=resolve_title([card.name, result.get("title", "")], url),
             text=text,
             kind="html",
             ok=True,
@@ -283,7 +284,7 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
     except Exception as exc:  # noqa: BLE001 — contract: never raise
         return _build(
             card_id=card.id,
-            title=card.name,
+            title=resolve_title([card.name], url),
             text=card.name,
             kind="hard",
             ok=False,

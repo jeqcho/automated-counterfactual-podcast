@@ -40,7 +40,30 @@ class FakeEngine:
         return Path(out_path)
 
 
+class RecordingEngine(FakeEngine):
+    """Captures the exact text handed to the engine."""
+    def synthesize(self, text: str, out_path: Path) -> Path:
+        self.last_text = text
+        return super().synthesize(text, out_path)
+
+
 # --- synthesize_card ------------------------------------------------------
+
+def test_title_is_spoken_as_intro(tmp_path):
+    engine = RecordingEngine()
+    synthesize_card("c-intro", "The article body.", engine=engine,
+                    cache=Cache(), out_dir=tmp_path / "audio",
+                    title="A Clear Title")
+    assert engine.last_text.startswith("A Clear Title.")
+    assert "The article body." in engine.last_text
+
+
+def test_no_title_means_no_intro(tmp_path):
+    engine = RecordingEngine()
+    synthesize_card("c-nointro", "Just the body.", engine=engine,
+                    cache=Cache(), out_dir=tmp_path / "audio")
+    assert engine.last_text == "Just the body."
+
 
 def test_ok_false_returns_none_and_skips_engine(tmp_path):
     engine = FakeEngine()

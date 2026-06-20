@@ -6,6 +6,7 @@ No real network: :func:`r2_client` is monkeypatched to a fake S3 that records
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 import pytest
 
@@ -58,6 +59,26 @@ def test_build_feed_valid_rss_three_items_in_order(tmp_path):
         dur = item.find(f"{{{ITUNES_NS}}}duration")
         assert dur is not None
         assert dur.text
+
+
+def test_build_feed_pubdate_encodes_priority_newest_first(tmp_path):
+    # Episodes are passed in priority order (item 0 = highest priority). Their
+    # pubDates must be strictly decreasing so a podcast app's default newest-first
+    # sort reproduces priority order (top priority = most recent).
+    from datetime import datetime, timezone
+    base = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc)
+    eps = _episodes(tmp_path, 3)
+    xml = build_feed(eps, public_base="https://pub.example.com", prefix="p", now=base)
+    root = ET.fromstring(xml)
+    items = root.find("channel").findall("item")
+    dates = [item.find("pubDate").text for item in items]
+    assert all(dates), "every item needs a pubDate"
+    parsed = [parsedate_to_datetime(d) for d in dates]
+    # Strictly decreasing: item 0 newest, then older.
+    assert parsed == sorted(parsed, reverse=True)
+    assert parsed[0] > parsed[1] > parsed[2]
+    # Top priority is anchored at ~now.
+    assert parsed[0] == base
 
 
 def test_build_feed_enclosure_length_is_file_size(tmp_path):

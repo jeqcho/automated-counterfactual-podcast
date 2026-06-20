@@ -56,6 +56,15 @@ def audio_duration_seconds(path: str | Path) -> float:
     return 0.0
 
 
+def _intro_text(title: str, body: str) -> str:
+    """Prepend the spoken title so each episode announces itself. The blank lines
+    give the TTS a brief pause between the title and the article body."""
+    title = (title or "").strip()
+    if not title or not config.SPEAK_TITLE_INTRO:
+        return body
+    return f"{title}.\n\n\n{body}"
+
+
 def synthesize_card(
     card_id: str,
     text: str,
@@ -64,6 +73,7 @@ def synthesize_card(
     cache: Cache | None = None,
     out_dir: Path = config.OUTPUTS / "audio",
     ok: bool = True,
+    title: str = "",
 ) -> AudioAsset | None:
     """Synthesize ``text`` for ``card_id`` into an MP3 and return an AudioAsset.
 
@@ -93,8 +103,9 @@ def synthesize_card(
         engine = get_engine()
 
     # Synthesize the FULL article — no truncation. One article = one episode, however
-    # long. (Speed comes from a fast TTS provider, not from cutting content.)
-    engine.synthesize(text, out_path)
+    # long. (Speed comes from a fast TTS provider, not from cutting content.) The title
+    # is spoken first so it's clear where one episode ends and the next begins.
+    engine.synthesize(_intro_text(title, text), out_path)
 
     seconds = audio_duration_seconds(out_path)
     asset = AudioAsset(

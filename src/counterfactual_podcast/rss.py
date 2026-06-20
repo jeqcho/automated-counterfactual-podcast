@@ -14,12 +14,19 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from feedgen.feed import FeedGenerator
 
 from . import config
+
+# Seconds between consecutive episodes' synthetic pubDates. Episodes are emitted in
+# priority order (item 0 = top); each gets a pubDate one step older than the one above
+# so a podcast app's default newest-first sort == priority order. Small step keeps every
+# date looking recent (300 episodes span ~5h, all "today").
+_PUBDATE_STEP_SECONDS = 60
 
 
 @dataclass
@@ -53,13 +60,25 @@ def build_feed(
     feed_title: str = "Jay's Counterfactual Podcast",
     public_base: str = "",
     prefix: str = "",
+    now: Optional[datetime] = None,
 ) -> str:
     """Build a valid iTunes-extended podcast RSS XML string.
 
     One ``<item>`` per episode, in the given order (priority = listen order).
     Each item has an enclosure pointing at
     ``{public_base}/{prefix}/{card_id}.mp3`` and an ``<itunes:duration>``.
+
+    Ordering: episodes arrive in priority order (item 0 = highest priority). Each is
+    stamped with a synthetic ``pubDate`` stepping backward from ``now`` (default: current
+    UTC time), so item 0 is the most recent. Podcast apps default to newest-first, so this
+    makes the app show highest-priority first. Re-stamped every publish, so a future
+    high-priority card lands at ~now (top), never "in the past".
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
     fg = FeedGenerator()
     fg.load_extension("podcast")
 
@@ -72,7 +91,7 @@ def build_feed(
     fg.language("en")
     fg.podcast.itunes_category("Education")
 
-    for ep in episodes:
+    for i, ep in enumerate(episodes):
         url = f"{base}/{prefix}/{ep.card_id}.mp3" if base else f"{prefix}/{ep.card_id}.mp3"
         # order='append' keeps items in priority (listen) order; feedgen
         # otherwise prepends (newest-first).
@@ -84,6 +103,8 @@ def build_feed(
             fe.link(href=ep.url)
         fe.enclosure(url, str(_file_size(ep.audio_path)), "audio/mpeg")
         fe.podcast.itunes_duration(_fmt_duration(ep.seconds))
+        # Priority -> pubDate: item 0 newest, each lower rank one step older.
+        fe.published(now - timedelta(seconds=i * _PUBDATE_STEP_SECONDS))
 
     return fg.rss_str(pretty=True).decode("utf-8")
 

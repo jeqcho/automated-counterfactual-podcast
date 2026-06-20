@@ -16,6 +16,7 @@ from .sort import merge_sort
 def episodes_for_queue(client, cache, queue_id: str | None = None):
     """Build ordered podcast episodes from the Listen Queue's cards + cached audio."""
     from .rss import QueueEpisode
+    from .titles import resolve_title
     qid = queue_id or client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
     eps = []
     for c in client.get_cards(qid):
@@ -23,7 +24,8 @@ def episodes_for_queue(client, cache, queue_id: str | None = None):
         if not a:
             continue
         d = cache.get_digest(c.id)
-        eps.append(QueueEpisode(card_id=c.id, title=(d.title if d else c.name),
+        title = resolve_title([d.title if d else None, c.name], url=c.url)
+        eps.append(QueueEpisode(card_id=c.id, title=title,
                                 audio_path=a.path, seconds=a.seconds, url=c.url))
     return eps
 
@@ -31,12 +33,14 @@ def episodes_for_queue(client, cache, queue_id: str | None = None):
 def make_synth(cache, engine=None):
     """Default synth: read extracted text from cache, TTS it, return AudioAsset|None."""
     from .audio import synthesize_card
+    from .titles import resolve_title
 
     async def synth(feats: CardFeatures) -> AudioAsset | None:
         ec = cache.get_extracted(feats.card_id)
         text = ec.text if ec else feats.title
+        title = resolve_title([ec.title if ec else None, feats.title])
         return synthesize_card(feats.card_id, text, engine=engine, cache=cache,
-                               ok=feats.ok)
+                               ok=feats.ok, title=title)
     return synth
 
 

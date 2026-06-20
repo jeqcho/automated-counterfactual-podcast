@@ -72,6 +72,9 @@ KOKORO_MODEL_PATH = os.environ.get("KOKORO_MODEL_PATH", str(DATA / "kokoro-v1.0.
 KOKORO_VOICES_PATH = os.environ.get("KOKORO_VOICES_PATH", str(DATA / "voices-v1.0.bin"))
 GOOGLE_TTS_VOICE = os.environ.get("GOOGLE_TTS_VOICE", "en-US-Neural2-D")
 GOOGLE_TTS_LANGUAGE = os.environ.get("GOOGLE_TTS_LANGUAGE", "en-US")
+# Speak the episode title at the start of each audio so it's clear where one article
+# ends and the next begins (set SPEAK_TITLE_INTRO=0 to disable).
+SPEAK_TITLE_INTRO = os.environ.get("SPEAK_TITLE_INTRO", "1") not in ("0", "false", "False", "")
 # NB: no per-card text cap — we synthesize the FULL article (one article = one episode).
 # Comment sections are stripped at extraction (extract.py) so length stays sane; speed
 # comes from a fast TTS provider, not from truncating content.
