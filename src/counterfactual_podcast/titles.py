@@ -51,6 +51,32 @@ def humanize_url(url: str) -> str:
     return title[:300]
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+def format_month_year(iso_date: str) -> str:
+    """'2017-11-25' / '2017-11-25T..' -> 'November 2017'. '' if unparseable."""
+    m = re.match(r"\s*(\d{4})-(\d{2})", iso_date or "")
+    if not m:
+        return ""
+    year, mon = m.group(1), int(m.group(2))
+    if not 1 <= mon <= 12:
+        return ""
+    return f"{_MONTHS[mon - 1]} {year}"
+
+
+def source_domain(url: str) -> str:
+    """Readable source domain for spoken signposting (host minus www)."""
+    if not url:
+        return ""
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+    return host.removeprefix("www.")
+
+
 def resolve_title(candidates, url: str = "") -> str:
     """First non-URL candidate (stripped); else a humanized URL; else best-effort.
 

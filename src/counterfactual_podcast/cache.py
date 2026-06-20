@@ -20,7 +20,8 @@ R2_CACHE_KEY = "state/cache.sqlite3"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS extracted (
     card_id TEXT PRIMARY KEY, title TEXT, text TEXT, word_count INTEGER,
-    est_minutes INTEGER, kind TEXT, ok INTEGER, note TEXT, fetched_at REAL
+    est_minutes INTEGER, kind TEXT, ok INTEGER, note TEXT, fetched_at REAL,
+    author TEXT DEFAULT '', published TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS digest (
     card_id TEXT PRIMARY KEY, title TEXT, est_minutes INTEGER, digest TEXT,
@@ -41,14 +42,24 @@ class Cache:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns to pre-existing DBs (cache is durable in R2 across schema bumps)."""
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(extracted)")}
+        for col in ("author", "published"):
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE extracted ADD COLUMN {col} TEXT DEFAULT ''")
 
     # --- extracted -------------------------------------------------------
     def put_extracted(self, c: ExtractedContent) -> None:
         self.conn.execute(
-            "INSERT OR REPLACE INTO extracted VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO extracted "
+            "(card_id,title,text,word_count,est_minutes,kind,ok,note,fetched_at,author,published) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (c.card_id, c.title, c.text, c.word_count, c.est_minutes,
-             c.kind, int(c.ok), c.note, time.time()),
+             c.kind, int(c.ok), c.note, time.time(), c.author, c.published),
         )
         self.conn.commit()
 
@@ -56,8 +67,11 @@ class Cache:
         r = self.conn.execute("SELECT * FROM extracted WHERE card_id=?", (card_id,)).fetchone()
         if not r:
             return None
+        keys = r.keys()
         return ExtractedContent(r["card_id"], r["title"], r["text"], r["word_count"],
-                                r["est_minutes"], r["kind"], bool(r["ok"]), r["note"])
+                                r["est_minutes"], r["kind"], bool(r["ok"]), r["note"],
+                                author=r["author"] if "author" in keys else "",
+                                published=r["published"] if "published" in keys else "")
 
     # --- digest ----------------------------------------------------------
     def put_digest(self, f: CardFeatures, model: str) -> None:

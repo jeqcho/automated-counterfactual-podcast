@@ -44,7 +44,7 @@ class FakeComparator:
 
 
 async def fake_synth_factory(seconds_each=3600.0, skip_ids=()):
-    async def synth(feats):
+    async def synth(feats, card=None):
         if feats.card_id in skip_ids:
             return None
         return AudioAsset(feats.card_id, f"/tmp/{feats.card_id}.mp3", seconds_each, "fake")

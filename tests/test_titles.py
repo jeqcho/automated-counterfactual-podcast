@@ -1,4 +1,20 @@
-from counterfactual_podcast.titles import humanize_url, is_urlish, resolve_title
+from counterfactual_podcast.titles import (
+    format_month_year, humanize_url, is_urlish, resolve_title, source_domain)
+
+
+def test_format_month_year():
+    assert format_month_year("2017-11-25") == "November 2017"
+    assert format_month_year("2017-11-25T13:00:00Z") == "November 2017"
+    assert format_month_year("2026-01-05") == "January 2026"
+    assert format_month_year("") == ""
+    assert format_month_year("not-a-date") == ""
+    assert format_month_year("2017-13-01") == ""  # bad month
+
+
+def test_source_domain():
+    assert source_domain("https://www.lesswrong.com/posts/x") == "lesswrong.com"
+    assert source_domain("https://intelligence.org/2017/11/25/x/") == "intelligence.org"
+    assert source_domain("") == ""
 
 
 def test_is_urlish():

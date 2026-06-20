@@ -156,17 +156,21 @@ def _default_fetch(url: str) -> dict:
     # favor_precision trims residual nav/boilerplate.
     text = trafilatura.extract(html, include_comments=False,
                                favor_precision=True) or ""
-    title = ""
+    title = author = published = ""
     try:
         meta = trafilatura.extract_metadata(html)
         if meta is not None:
             title = getattr(meta, "title", "") or ""
+            author = (getattr(meta, "author", "") or "").split(";")[0].strip()
+            published = (getattr(meta, "date", "") or "").strip()
     except Exception:
-        title = ""
+        pass
     return {
         "kind": "html",
         "text": text,
         "title": title,
+        "author": author,
+        "published": published,
         "content_type": content_type or "text/html",
         "raw": html,
     }
@@ -192,6 +196,8 @@ def _build(
     kind: str,
     ok: bool,
     note: str = "",
+    author: str = "",
+    published: str = "",
 ) -> ExtractedContent:
     text = text or ""
     wc = len(text.split())
@@ -203,6 +209,8 @@ def _build(
         est_minutes=est_minutes(wc),
         kind=kind,
         ok=ok,
+        author=author,
+        published=published,
         note=note,
     )
 
@@ -280,6 +288,8 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
             text=text,
             kind="html",
             ok=True,
+            author=result.get("author", ""),
+            published=result.get("published", ""),
         )
     except Exception as exc:  # noqa: BLE001 — contract: never raise
         return _build(

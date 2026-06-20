@@ -56,13 +56,29 @@ def audio_duration_seconds(path: str | Path) -> float:
     return 0.0
 
 
-def _intro_text(title: str, body: str) -> str:
-    """Prepend the spoken title so each episode announces itself. The blank lines
-    give the TTS a brief pause between the title and the article body."""
+def _signpost_text(body: str, *, title: str = "", author: str = "",
+                   source: str = "", date: str = "") -> str:
+    """Wrap the article in spoken intro/outro signposts so it's clear where one
+    episode ends and the next begins. Minimal, and gracefully omits any missing
+    field. Blank lines give the TTS a short pause around the body.
+
+    Intro: "Start of article. <title>, by <author>, from <domain>, <Month Year>."
+    Outro: "End of article. <title>, from <domain>."
+    """
     title = (title or "").strip()
     if not title or not config.SPEAK_TITLE_INTRO:
         return body
-    return f"{title}.\n\n\n{body}"
+    intro_bits = [title]
+    if author:
+        intro_bits.append(f"by {author}")
+    if source:
+        intro_bits.append(f"from {source}")
+    if date:
+        intro_bits.append(date)
+    intro = f"Start of article. {', '.join(intro_bits)}.\n\n\n"
+    outro_tail = f"{title}, from {source}" if source else title
+    outro = f"\n\n\nEnd of article. {outro_tail}."
+    return f"{intro}{body}{outro}"
 
 
 def synthesize_card(
@@ -74,6 +90,9 @@ def synthesize_card(
     out_dir: Path = config.OUTPUTS / "audio",
     ok: bool = True,
     title: str = "",
+    author: str = "",
+    source: str = "",
+    date: str = "",
 ) -> AudioAsset | None:
     """Synthesize ``text`` for ``card_id`` into an MP3 and return an AudioAsset.
 
@@ -105,7 +124,9 @@ def synthesize_card(
     # Synthesize the FULL article — no truncation. One article = one episode, however
     # long. (Speed comes from a fast TTS provider, not from cutting content.) The title
     # is spoken first so it's clear where one episode ends and the next begins.
-    engine.synthesize(_intro_text(title, text), out_path)
+    engine.synthesize(
+        _signpost_text(text, title=title, author=author, source=source, date=date),
+        out_path)
 
     seconds = audio_duration_seconds(out_path)
     asset = AudioAsset(

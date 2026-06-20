@@ -32,6 +32,8 @@ class ExtractedContent:
     kind: str          # "html" | "pdf" | "text" | "hard"
     ok: bool           # False => paywalled / X / YouTube / dead link (skip TTS)
     note: str = ""
+    author: str = ""       # for spoken signposting (best-effort, may be empty)
+    published: str = ""    # ISO date string (best-effort); formatted to "Month Year"
 
 
 @dataclass

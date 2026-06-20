@@ -49,16 +49,28 @@ class RecordingEngine(FakeEngine):
 
 # --- synthesize_card ------------------------------------------------------
 
-def test_title_is_spoken_as_intro(tmp_path):
+def test_title_is_spoken_as_intro_and_outro(tmp_path):
     engine = RecordingEngine()
     synthesize_card("c-intro", "The article body.", engine=engine,
                     cache=Cache(), out_dir=tmp_path / "audio",
                     title="A Clear Title")
-    assert engine.last_text.startswith("A Clear Title.")
+    assert engine.last_text.startswith("Start of article. A Clear Title.")
     assert "The article body." in engine.last_text
+    assert engine.last_text.rstrip().endswith("End of article. A Clear Title.")
 
 
-def test_no_title_means_no_intro(tmp_path):
+def test_signpost_includes_author_source_and_date(tmp_path):
+    engine = RecordingEngine()
+    synthesize_card("c-meta", "Body.", engine=engine, cache=Cache(),
+                    out_dir=tmp_path / "audio", title="The Title",
+                    author="Jane Doe", source="example.com", date="November 2017")
+    assert engine.last_text.startswith(
+        "Start of article. The Title, by Jane Doe, from example.com, November 2017.")
+    # outro keeps it minimal: title + source.
+    assert engine.last_text.rstrip().endswith("End of article. The Title, from example.com.")
+
+
+def test_no_title_means_no_signpost(tmp_path):
     engine = RecordingEngine()
     synthesize_card("c-nointro", "Just the body.", engine=engine,
                     cache=Cache(), out_dir=tmp_path / "audio")

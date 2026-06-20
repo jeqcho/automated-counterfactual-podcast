@@ -32,16 +32,27 @@ def episodes_for_queue(client, cache, queue_id: str | None = None):
 
 
 def make_synth(cache, engine=None):
-    """Default synth: read extracted text from cache, TTS it, return AudioAsset|None."""
-    from .audio import synthesize_card
-    from .titles import resolve_title
+    """Default synth: read extracted text from cache, TTS it, return AudioAsset|None.
 
-    async def synth(feats: CardFeatures) -> AudioAsset | None:
+    ``card`` (optional) supplies the URL for the source domain + a name fallback for
+    the title; without it the signpost still works from cached title/author/date.
+    """
+    from .audio import synthesize_card
+    from .extract import find_url
+    from .titles import format_month_year, resolve_title, source_domain
+
+    async def synth(feats: CardFeatures, card=None) -> AudioAsset | None:
         ec = cache.get_extracted(feats.card_id)
         text = ec.text if ec else feats.title
-        title = resolve_title([ec.title if ec else None, feats.title])
-        return synthesize_card(feats.card_id, text, engine=engine, cache=cache,
-                               ok=feats.ok, title=title)
+        url = (find_url(card) or card.url) if card is not None else ""
+        title = resolve_title([ec.title if ec else None, feats.title,
+                               card.name if card is not None else None], url=url)
+        return synthesize_card(
+            feats.card_id, text, engine=engine, cache=cache, ok=feats.ok,
+            title=title,
+            author=(ec.author if ec else ""),
+            source=source_domain(url),
+            date=format_month_year(ec.published if ec else ""))
     return synth
 
 
@@ -64,6 +75,7 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
     if current < target_sec:
         candidates = [c for lid in source_list_ids
                       for c in client.get_cards(lid) if c.id not in in_queue]
+        cards_by_id = {c.id: c for c in candidates}
         if log:
             log.info(f"queue at {current/3600:.1f}h < {target_hours}h — "
                      f"{len(candidates)} candidates from System1+LifeOptim")
@@ -73,7 +85,7 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
             if current >= target_sec:
                 break
             try:
-                asset = await synth(f)
+                asset = await synth(f, cards_by_id.get(f.card_id))
             except Exception as e:  # noqa: BLE001 — one bad card must not kill the run
                 if log:
                     log.warning(f"  skip synth {f.card_id} ({(f.title or '')[:40]}): "
