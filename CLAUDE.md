@@ -28,9 +28,8 @@ enclosures fetch 200, ~20h of audio). The whole system is off the Mac and verifi
 https://pub-cbe1a1411c65446c872416872b3c2403.r2.dev/4b1eb250c30c47558534e62b20620d25/rss.xml
 ```
 
-**Your 2 remaining manual tasks:**
-1. **Subscribe** to the feed URL above.
-2. **Repoint the 2 Trello Butler buttons** to the workers.dev URLs (they still point at the
+**Your remaining manual task** (✅ subscribed to the feed already, 2026-06-20):
+1. **Repoint the 2 Trello Butler buttons** to the workers.dev URLs (they still point at the
    dead `trigger.chojeq.com` tunnel):
    - Extract readables (Phase 1) → `https://counterfactual-podcast.chooijqweb.workers.dev/phase1`
    - Sort readables (Phase 2) → `https://counterfactual-podcast.chooijqweb.workers.dev/phase2`
