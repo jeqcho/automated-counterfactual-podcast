@@ -81,6 +81,27 @@ uvicorn server can be killed anytime (no longer in the loop).
 - Node side now set up: `package.json` pins `@cloudflare/containers ^0.3.7` + wrangler;
   `npm install` before `wrangler deploy` (needs Docker running).
 
+## Podcast feed UX (2026-06-20) — titles, spoken intros, priority order
+
+Three feed behaviors, all live in the pipeline (new runs do them automatically) and
+back-applied to the published 46-episode feed via `scripts/rebuild_podcast.py`:
+- **Clean episode titles.** Half the episodes were titled with the raw article URL because
+  extraction stored `card.name` (a bare URL) as the title. `titles.resolve_title([...], url)`
+  picks the first non-URL candidate, else humanizes the URL slug. `extract.py` now prefers a
+  real page `<title>` over a URL-ish card name. RSS title + spoken intro both use it. NB:
+  resolve sites must pass `find_url(card) or card.url` as the url — some queue cards have no
+  URL attachment, so `card.url` is empty and the URL only lives in the name.
+- **Spoken title intro.** `audio._intro_text` prepends `"{title}.\n\n\n"` to the synth text
+  (toggle `config.SPEAK_TITLE_INTRO`) so each episode announces itself — makes the boundary
+  between back-to-back episodes obvious. Changing the intro means re-synthesizing.
+- **Priority-encoded order.** Podcast apps sort by `pubDate`. `rss.build_feed` stamps each
+  item (emitted in priority order, item 0 = top) with a pubDate stepping back from `now`
+  (60s/step), so the app's default newest-first == counterfactual-impact order. Re-stamped
+  every publish, so a NEW high-priority card lands at ~now (top), never "in the past"; only
+  low-priority cards get older synthetic dates. Episodes you finish + archive leave the queue.
+- One-off title backfill: `rebuild_podcast.py` rewrites url-ish cached titles (extracted +
+  digest) from OG/renamed card names so legacy cache rows don't speak/show URLs on future runs.
+
 ## Earlier (2026-06-02 → 03) — see `reports/MORNING-HANDOFF.md`
 Two-phase intake live (Phase 1 button works); System 1/2/Life-Optim sorted in place
 (before-copies on board); a ~3h Kokoro listen queue + podcast feed built overnight; Google
