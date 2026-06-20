@@ -93,12 +93,14 @@ def synthesize_card(
     author: str = "",
     source: str = "",
     date: str = "",
+    r2_check=None,
 ) -> AudioAsset | None:
     """Synthesize ``text`` for ``card_id`` into an MP3 and return an AudioAsset.
 
     - ``ok=False`` (unreadable / paywalled card): can't be voiced -> return None.
-    - If the cache already has audio for ``card_id`` and the file still exists,
-      return the cached asset without re-synthesizing.
+    - If the cache already has audio for ``card_id`` AND the MP3 still exists — locally
+      OR (via ``r2_check(card_id)``) in R2 — return the cached asset without re-synth.
+      The R2 check is what makes audio durable on fresh cloud containers (no local disk).
     - Otherwise synth to ``out_dir/{card_id}.mp3`` via ``engine`` (defaulting to
       :func:`get_engine`), measure the real duration, build and cache an
       ``AudioAsset``, and return it.
@@ -107,12 +109,16 @@ def synthesize_card(
         log.info("skip TTS for card %s (ok=False, unreadable/paywalled)", card_id)
         return None
 
-    # Resume: reuse cached audio only if its file is still present.
+    # Resume: reuse cached audio if its MP3 is still present locally or in R2.
     if cache is not None:
         cached = cache.get_audio(card_id)
-        if cached is not None and cached.path and Path(cached.path).exists():
-            log.debug("audio cache hit for card %s -> %s", card_id, cached.path)
-            return cached
+        if cached is not None:
+            if cached.path and Path(cached.path).exists():
+                log.debug("audio cache hit (local) for card %s -> %s", card_id, cached.path)
+                return cached
+            if r2_check is not None and r2_check(card_id):
+                log.debug("audio cache hit (R2) for card %s", card_id)
+                return cached
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

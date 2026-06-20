@@ -2,7 +2,8 @@ from collections import Counter
 
 import pytest
 
-from counterfactual_podcast.sort import copeland_rank, insert_sorted, merge_sort
+from counterfactual_podcast.sort import (
+    copeland_rank, insert_sorted, merge_presorted, merge_sort)
 
 
 async def fake_cmp(a, b):
@@ -36,6 +37,22 @@ async def test_insert_sorted_places_correctly():
     assert await insert_sorted(3, [5, 4, 2, 1], fake_cmp) == [5, 4, 3, 2, 1]
     assert await insert_sorted(9, [5, 4], fake_cmp) == [9, 5, 4]
     assert await insert_sorted(0, [5, 4], fake_cmp) == [5, 4, 0]
+
+
+async def test_merge_presorted_merges_two_sorted_runs():
+    # Two already-descending runs -> correctly interleaved, with only cross-run compares.
+    calls = Counter()
+    out = await merge_presorted([[9, 6, 3], [8, 5, 2]], counting_cmp(calls))
+    assert out == [9, 8, 6, 5, 3, 2]
+    # A full merge_sort of 6 items would do ~ n*log2 n ≈ 15 compares; merging two
+    # presorted runs needs at most len(a)+len(b)-1 = 5.
+    assert calls["n"] <= 5
+
+
+async def test_merge_presorted_handles_empty_and_single():
+    assert await merge_presorted([], fake_cmp) == []
+    assert await merge_presorted([[], [3, 1]], fake_cmp) == [3, 1]
+    assert await merge_presorted([[5]], fake_cmp) == [5]
 
 
 async def test_merge_sort_comparison_count_is_nlogn():

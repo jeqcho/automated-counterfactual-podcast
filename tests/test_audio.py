@@ -155,6 +155,27 @@ def test_cache_miss_when_file_deleted_resynthesizes(tmp_path):
     assert Path(second.path).exists()
 
 
+def test_durable_audio_reused_from_r2_without_resynth(tmp_path):
+    # Simulates a fresh cloud container: cache row present, but no local MP3. With an
+    # r2_check that says the MP3 is in R2, we reuse it instead of re-synthesizing.
+    cache = Cache()
+    out_dir = tmp_path / "audio"
+    first = synthesize_card("card-r2", "text", engine=FakeEngine(), cache=cache, out_dir=out_dir)
+    Path(first.path).unlink()  # local file gone (fresh container)
+
+    engine2 = FakeEngine()
+    reused = synthesize_card("card-r2", "text", engine=engine2, cache=cache,
+                             out_dir=out_dir, r2_check=lambda cid: True)
+    assert engine2.calls == 0          # NOT re-synthesized
+    assert reused.card_id == "card-r2"
+
+    # If R2 doesn't have it either, we must re-synthesize.
+    engine3 = FakeEngine()
+    synthesize_card("card-r2", "text", engine=engine3, cache=cache,
+                    out_dir=out_dir, r2_check=lambda cid: False)
+    assert engine3.calls == 1
+
+
 # --- audio_duration_seconds -----------------------------------------------
 
 def test_audio_duration_on_wav_positive(tmp_path):

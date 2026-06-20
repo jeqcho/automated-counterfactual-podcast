@@ -38,6 +38,24 @@ async def _merge(left: list[T], right: list[T], acompare: Comparator) -> list[T]
     return out
 
 
+async def merge_presorted(runs: Sequence[Sequence[T]], acompare: Comparator) -> list[T]:
+    """Merge several ALREADY-sorted runs into one sorted list.
+
+    When the inputs are each already in priority order (e.g. System 1 and Life Optim,
+    kept sorted in place), a full ``merge_sort`` wastefully re-compares within-run pairs.
+    This trusts each run's order and only does the cross-run comparisons — ~sum(len) total
+    instead of ~n log n — which is the dominant cost since comparisons are sequential LLM
+    calls. Folds runs pairwise via the standard 2-way ``_merge``.
+    """
+    runs = [list(r) for r in runs if r]
+    if not runs:
+        return []
+    acc = runs[0]
+    for nxt in runs[1:]:
+        acc = await _merge(acc, nxt, acompare)
+    return acc
+
+
 async def merge_sort(items: Sequence[T], acompare: Comparator) -> list[T]:
     """Bottom-up merge sort; independent merges per level run concurrently."""
     runs: list[list[T]] = [[x] for x in items]

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from . import config
 from .models import AudioAsset, CardFeatures
-from .sort import merge_sort
+from .sort import merge_presorted
 
 
 def episodes_for_queue(client, cache, queue_id: str | None = None):
@@ -39,7 +39,10 @@ def make_synth(cache, engine=None):
     """
     from .audio import synthesize_card
     from .extract import find_url
+    from .r2 import make_audio_checker
     from .titles import format_month_year, resolve_title, source_domain
+
+    r2_check = make_audio_checker()  # None if R2 unconfigured (local runs)
 
     async def synth(feats: CardFeatures, card=None) -> AudioAsset | None:
         ec = cache.get_extracted(feats.card_id)
@@ -52,7 +55,8 @@ def make_synth(cache, engine=None):
             title=title,
             author=(ec.author if ec else ""),
             source=source_domain(url),
-            date=format_month_year(ec.published if ec else ""))
+            date=format_month_year(ec.published if ec else ""),
+            r2_check=r2_check)
     return synth
 
 
@@ -73,14 +77,22 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
     added: list[CardFeatures] = []
 
     if current < target_sec:
-        candidates = [c for lid in source_list_ids
-                      for c in client.get_cards(lid) if c.id not in in_queue]
-        cards_by_id = {c.id: c for c in candidates}
+        # Each source list is ALREADY impact-sorted (sorted in place / kept sorted by
+        # weekly insertion), so MERGE the per-list runs (~cross-list comparisons) instead
+        # of a full re-sort of the combined pool (~n log n). Comparisons are sequential
+        # LLM calls, so this is the ~8x first-run speedup.
+        cards_by_id = {}
+        per_list_feats = []
+        for lid in source_list_ids:
+            lst = [c for c in client.get_cards(lid) if c.id not in in_queue]
+            for c in lst:
+                cards_by_id[c.id] = c
+            per_list_feats.append([f for f in await enricher.aenrich_many(lst) if f.ok])
+        n_cand = sum(len(p) for p in per_list_feats)
         if log:
             log.info(f"queue at {current/3600:.1f}h < {target_hours}h — "
-                     f"{len(candidates)} candidates from System1+LifeOptim")
-        cfeats = [f for f in await enricher.aenrich_many(candidates) if f.ok]
-        ranked = await merge_sort(cfeats, comparator.acompare)
+                     f"{n_cand} candidates from System1+LifeOptim (merging presorted lists)")
+        ranked = await merge_presorted(per_list_feats, comparator.acompare)
         for f in ranked:
             if current >= target_sec:
                 break
@@ -98,9 +110,11 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
             in_queue.add(f.card_id)
             current += asset.seconds
 
-    # keep the whole queue ordered by counterfactual impact (top = listen next)
-    qfeats = (await enricher.aenrich_many(queue_cards)) + added
-    final = await merge_sort(qfeats, comparator.acompare) if qfeats else []
+    # Keep the whole queue ordered by impact (top = listen next). The existing queue is
+    # already sorted (last run) and `added` came out of the merge in sorted order, so merge
+    # those two presorted runs rather than re-sorting the whole queue from scratch.
+    queue_feats = await enricher.aenrich_many(queue_cards)
+    final = await merge_presorted([queue_feats, added], comparator.acompare)
     for i, f in enumerate(final):
         client.set_card_position(f.card_id, (i + 1) * 1000.0)
 
