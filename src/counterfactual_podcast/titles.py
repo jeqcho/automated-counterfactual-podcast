@@ -17,6 +17,11 @@ _EXT = re.compile(r"\.(html?|php|aspx?|jsp|pdf)$", re.IGNORECASE)
 _LEAD_NUM = re.compile(r"^(\d+[-_]?)+")
 
 
+def _clean_ws(s: str) -> str:
+    """Collapse whitespace and cap length (titles can be long meta strings)."""
+    return re.sub(r"\s+", " ", s).strip()[:480]
+
+
 def is_urlish(s: str | None) -> bool:
     """True if the string is (starts as) a bare URL."""
     return bool(s) and bool(_URLISH.match(s))
