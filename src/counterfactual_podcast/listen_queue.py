@@ -16,6 +16,7 @@ from .sort import merge_sort
 def episodes_for_queue(client, cache, queue_id: str | None = None):
     """Build ordered podcast episodes from the Listen Queue's cards + cached audio."""
     from .rss import QueueEpisode
+    from .extract import find_url
     from .titles import resolve_title
     qid = queue_id or client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
     eps = []
@@ -24,7 +25,7 @@ def episodes_for_queue(client, cache, queue_id: str | None = None):
         if not a:
             continue
         d = cache.get_digest(c.id)
-        title = resolve_title([d.title if d else None, c.name], url=c.url)
+        title = resolve_title([d.title if d else None, c.name], url=find_url(c) or c.url)
         eps.append(QueueEpisode(card_id=c.id, title=title,
                                 audio_path=a.path, seconds=a.seconds, url=c.url))
     return eps

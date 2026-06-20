@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from counterfactual_podcast import config
 from counterfactual_podcast.audio import _intro_text, audio_duration_seconds
 from counterfactual_podcast.cache import Cache
+from counterfactual_podcast.extract import find_url
 from counterfactual_podcast.listen_queue import episodes_for_queue
 from counterfactual_podcast.logging_setup import setup_logging
 from counterfactual_podcast.models import AudioAsset
@@ -68,7 +69,7 @@ def main():
 
     fixed_titles = 0
     for card in all_cards:
-        good = resolve_title([og_titles.get(card.id), card.name], url=card.url)
+        good = resolve_title([og_titles.get(card.id), card.name], url=find_url(card) or card.url)
         if not good or is_urlish(good):
             continue
         ec = cache.get_extracted(card.id)
@@ -100,7 +101,7 @@ def main():
             log.info(f"  skip {card.id}: no usable text")
             continue
         d = cache.get_digest(card.id)
-        title = resolve_title([d.title if d else None, ec.title, card.name], url=card.url)
+        title = resolve_title([d.title if d else None, ec.title, card.name], url=find_url(card) or card.url)
         jobs.append((card.id, title, ec.text))
 
     def synth_one(job):
