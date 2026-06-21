@@ -11,7 +11,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: .env is the project's authoritative config, even if the surrounding
+# shell already exports the same names (e.g. a personal ANTHROPIC_API_KEY in ~/.zshrc
+# that points at a different/empty-balance account). Without override, an exported shell
+# var silently wins and you end up using the wrong key. In the cloud container there's no
+# .env file, so this is a no-op there and the Worker-forwarded env vars are used as-is.
+load_dotenv(override=True)
 
 ROOT = Path(__file__).resolve().parents[2]
 
