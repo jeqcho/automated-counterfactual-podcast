@@ -84,10 +84,12 @@ class Enricher:
             if self.cache is not None:
                 self.cache.put_extracted(ec)
 
-        if not ec.ok:
-            digest = f"[unreadable: {ec.note or ec.kind}] {ec.title}"
-        else:
+        # Readable articles AND "abstract" rows (paywalled, but with an og:description
+        # summary) get a real digest. Only truly-empty failures fall back to [unreadable].
+        if ec.text.strip() and (ec.ok or ec.kind == "abstract"):
             digest = await self._ask_digest(ec.title, ec.text)
+        else:
+            digest = f"[unreadable: {ec.note or ec.kind}] {ec.title}"
 
         feats = CardFeatures(card.id, ec.title, ec.est_minutes, digest, ec.kind, ec.ok)
         if self.cache is not None:

@@ -37,6 +37,31 @@ def test_extract_main_text_keeps_precise_if_recall_not_longer():
     assert _extract_main_text("<html>", extractor=ex) == "x" * 50
 
 
+def test_hard_domain_falls_back_to_abstract(monkeypatch):
+    import counterfactual_podcast.extract as ex_mod
+    monkeypatch.setattr("counterfactual_podcast.web_meta.fetch_meta",
+                        lambda url, timeout=20: {"title": "Real Headline",
+                        "description": "A one-sentence abstract of the piece.",
+                        "author": "A. Writer", "date": "2026-02-02", "image": None})
+    card = Card(id="c", name="https://www.nytimes.com/2026/02/02/x.html", desc="")
+    ec = ex_mod.extract(card)
+    assert ec.kind == "abstract" and ec.ok is False
+    assert ec.title == "Real Headline"
+    assert ec.text == "A one-sentence abstract of the piece."
+    assert ec.est_minutes == config.ABSTRACT_DEFAULT_MINUTES   # not 0 from the short text
+    assert ec.author == "A. Writer" and ec.published == "2026-02-02"
+
+
+def test_hard_domain_no_metadata_stays_unreadable(monkeypatch):
+    import counterfactual_podcast.extract as ex_mod
+    monkeypatch.setattr("counterfactual_podcast.web_meta.fetch_meta",
+                        lambda url, timeout=20: {"title": None, "description": None,
+                        "author": None, "date": None, "image": None})
+    card = Card(id="c", name="https://x.com/foo/status/1", desc="")
+    ec = ex_mod.extract(card)
+    assert ec.kind == "hard" and ec.ok is False
+
+
 def test_est_minutes_rounds():
     assert config.WPM_READING == 230
     assert est_minutes(2300) == 10

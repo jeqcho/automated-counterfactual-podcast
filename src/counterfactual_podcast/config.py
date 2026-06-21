@@ -70,6 +70,11 @@ MAX_FETCH_CONCURRENCY = int(os.environ.get("MAX_FETCH_CONCURRENCY", "50"))  # co
 # Hard cap on article text sent to Haiku per digest — bounds worst-case cost so one
 # giant page can't blow up spend. 24000 chars ≈ 6k tokens ≈ ~$0.006/card on Haiku.
 DIGEST_TEXT_CAP_CHARS = int(os.environ.get("DIGEST_TEXT_CAP_CHARS", "24000"))
+# Cards we can't fully extract (paywalls) but that expose an og:description abstract are
+# ranked on that abstract (kind="abstract", ok=False -> excluded from the podcast). We have
+# no real reading time, so assume a typical longform-article length for the impact-per-minute
+# comparator step rather than 0 (which would wrongly treat them as instant reads).
+ABSTRACT_DEFAULT_MINUTES = int(os.environ.get("ABSTRACT_DEFAULT_MINUTES", "8"))
 
 # --- TTS ------------------------------------------------------------------
 TTS_ENGINE = os.environ.get("TTS_ENGINE", "kokoro")

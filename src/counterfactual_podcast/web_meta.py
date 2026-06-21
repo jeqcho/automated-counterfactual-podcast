@@ -45,8 +45,10 @@ def parse_meta(html_bytes: bytes, page_url: str) -> dict:
     if not date:
         d = doc.xpath("//time/@datetime")
         date = d[0].strip() if d and d[0].strip() else None
+    description = meta("og:description", "description", "twitter:description")
     return {"title": _clean_ws(title) if title else None, "image": img,
-            "author": _clean_ws(author) if author else None, "date": date}
+            "author": _clean_ws(author) if author else None, "date": date,
+            "description": _clean_ws(description) if description else None}
 
 
 def og_meta(html_bytes: bytes, page_url: str):
@@ -62,7 +64,8 @@ def fetch_meta(url: str, timeout: int = 20) -> dict:
         r.raise_for_status()
         return parse_meta(r.content, r.url)
     except Exception:  # noqa: BLE001
-        return {"title": None, "image": None, "author": None, "date": None}
+        return {"title": None, "image": None, "author": None, "date": None,
+                "description": None}
 
 
 def fetch_og(url: str, timeout: int = 20):

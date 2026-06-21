@@ -229,6 +229,36 @@ def _build(
     )
 
 
+def _abstract_card(card_id, title, description, domain, author="", published=""):
+    """An 'abstract' row: a paywalled/blocked page we couldn't fully read, but whose
+    og:description gives a real summary to rank on. ok=False (no full text to voice), but
+    a substantive digest source. est_minutes is a typical-article default, not the abstract's
+    tiny length, so the impact-per-minute step isn't fooled into treating it as instant."""
+    return ExtractedContent(
+        card_id=card_id, title=title, text=description,
+        word_count=len(description.split()),
+        est_minutes=config.ABSTRACT_DEFAULT_MINUTES,
+        kind="abstract", ok=False, author=author, published=published,
+        note=f"metadata-only (paywall/blocked): {domain}",
+    )
+
+
+def _metadata_fallback(card: Card, url: str):
+    """When full extraction fails, try og:title + og:description. Returns an 'abstract'
+    ExtractedContent or None. Lazy import of web_meta avoids a circular import."""
+    try:
+        from .web_meta import fetch_meta
+        m = fetch_meta(url)
+    except Exception:  # noqa: BLE001
+        return None
+    desc = (m.get("description") or "").strip()
+    if not desc:
+        return None
+    title = resolve_title([m.get("title"), card.name], url)
+    return _abstract_card(card.id, title, desc, _domain(url),
+                          author=m.get("author") or "", published=m.get("date") or "")
+
+
 def extract_from_text(text: str, card_id: str = "", title: str = "") -> ExtractedContent:
     """Wrap bare text (no URL) as an ExtractedContent of kind 'text'."""
     return _build(
@@ -260,8 +290,11 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
             ok=True,
         )
 
-    # 2. Hard domain -> skip extraction, keep a fallback row.
+    # 2. Hard domain -> can't extract the body, but try the og:description abstract.
     if is_hard(url):
+        fb = _metadata_fallback(card, url)
+        if fb is not None:
+            return fb
         return _build(
             card_id=card.id,
             title=resolve_title([card.name], url),
@@ -306,6 +339,9 @@ def extract(card: Card, *, fetch: Optional[Callable[[str], dict]] = None) -> Ext
             published=result.get("published", ""),
         )
     except Exception as exc:  # noqa: BLE001 — contract: never raise
+        fb = _metadata_fallback(card, url)
+        if fb is not None:
+            return fb
         return _build(
             card_id=card.id,
             title=resolve_title([card.name], url),
