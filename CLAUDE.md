@@ -104,14 +104,13 @@ back-applied to the published 46-episode feed via `scripts/rebuild_podcast.py`:
 - One-off title backfill: `rebuild_podcast.py` rewrites url-ish cached titles (extracted +
   digest) from OG/renamed card names so legacy cache rows don't speak/show URLs on future runs.
 
-**Finished-episode workflow (decided 2026-06-20): feed is a QUEUE, not a library.** Jay
-listens top-down in Apple Podcasts (priority = newest pubDate). When done, he moves the card
-from `Listen Queue` → **`✓ Listened`** (a history list created on the board; archiving works
-too). Nothing auto-deletes — an episode only leaves the feed when its card leaves `Listen
-Queue` AND Phase 2 republishes. `episodes_for_queue` reads only the `Listen Queue` list, and
-the queue tops up from System1+LifeOptim, so a card in `✓ Listened` is both out of the feed
-and won't be re-queued — zero code needed. MP3s persist in R2 (orphaned, harmless; the feed
-just stops referencing them), so a feed could be rebuilt from history later if ever wanted.
+**Finished-episode workflow (2026-06-20): feed is a QUEUE, not a library.** Jay listens
+top-down in Apple Podcasts (priority = newest pubDate). When done, he **archives the card**
+in `Listen Queue` (no separate history list — he didn't want one). Nothing auto-deletes — an
+episode only leaves the feed when its card leaves `Listen Queue` AND Phase 2 republishes.
+`episodes_for_queue` reads only the `Listen Queue` list and the queue tops up from
+System1+LifeOptim, so an archived card is both out of the feed and won't be re-queued — zero
+code needed. MP3s persist in R2 (orphaned, harmless), so a feed could be rebuilt later.
 
 ## Earlier (2026-06-02 → 03) — see `reports/MORNING-HANDOFF.md`
 Two-phase intake live (Phase 1 button works); System 1/2/Life-Optim sorted in place
@@ -193,9 +192,10 @@ run) → review → `--apply`.
 - **Two-phase intake** (Inbox mixes reading links with todos): **Phase 1** (`triage.py`
   + `pipelines/phase1.py`) classifies each Inbox card read-vs-do (cheap Haiku, title/URL
   only) and moves only reading material → `To Be Processed` (todos stay in Inbox; title
-  only, no markers). Jay reviews, then drags keepers into `▶ Ready to Process`. **Phase 2**
-  (`pipelines/phase2.py`) drains that list → enrich → route+rank+markers → queue → publish.
-  Both dry-run by default; Phase 2 is a poller (no-op when the trigger list is empty).
+  only, no markers). Jay reviews `To Be Processed` and drags any wrong cards back to the
+  Inbox. **Phase 2** (`pipelines/phase2.py`) then drains `To Be Processed` (the SAME list —
+  no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
+  queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
 - **Trello buttons (Jay buying Premium):** Butler HTTP requests (Premium) let two board
   buttons POST to a local FastAPI **trigger server** (`server.py`, `/phase1` + `/phase2`,
   `X-Trigger-Token` auth), exposed to Trello via a **Cloudflare Tunnel**. Button press →

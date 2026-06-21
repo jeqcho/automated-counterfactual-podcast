@@ -1,10 +1,11 @@
-"""Phase 2: drain '▶ Ready to Process', route + rank, top up queue, publish.
+"""Phase 2: drain 'To Be Processed', route + rank, top up queue, publish.
 
-Triggered by Jay dragging reviewed cards into the '▶ Ready to Process' list (Phase 2
-runs as a scheduled poller — a no-op when that list is empty). For each card: enrich
-(extract + digest) -> classify into System1/System2/LifeOptim -> binary-insert at its
-counterfactual-impact rank and write the desc rank marker. Then top up the Listen
-Queue and publish the podcast. Defaults to dry-run.
+Triggered after Jay prunes 'To Be Processed' (Phase 1's output) — he drags any wrong cards
+back to the Inbox, then presses 'Sort readables'. Whatever remains in 'To Be Processed' is
+processed (a no-op when the list is empty). For each card: enrich (extract + digest) ->
+classify into System1/System2/LifeOptim -> binary-insert at its counterfactual-impact rank
+and write the desc rank marker. Then top up the Listen Queue and publish the podcast.
+Defaults to dry-run.
 """
 from __future__ import annotations
 
@@ -19,10 +20,10 @@ from .weekly import _insertion_pos  # shared fractional-position helper
 
 async def run_phase2(client, cache, enricher, classifier, comparator,
                      ensure_queue_fn, publish_fn, *, apply: bool = False, log=None) -> dict:
-    trigger_id = client.ensure_list(config.READY_TO_PROCESS_LIST_NAME)
+    trigger_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
     cards = client.get_cards(trigger_id)
     if log:
-        log.info(f"'▶ Ready to Process' has {len(cards)} cards")
+        log.info(f"'To Be Processed' has {len(cards)} cards")
 
     routed = []
     for card in cards:
@@ -76,7 +77,7 @@ async def _build_and_run(apply: bool, log=None) -> dict:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 2: process '▶ Ready to Process'")
+    ap = argparse.ArgumentParser(description="Phase 2: process 'To Be Processed'")
     ap.add_argument("--apply", action="store_true", help="route/queue/publish (default: dry run)")
     args = ap.parse_args()
     from ..logging_setup import setup_logging

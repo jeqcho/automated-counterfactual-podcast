@@ -47,13 +47,11 @@ So when one finishes and the next auto-plays, you'll clearly hear the hand-off.
 | List | What it's for |
 |------|----------------|
 | **Inbox** (Trello's built-in inbox) | Where you dump everything — reading links *and* random to-dos, mixed together. |
-| **To Be Processed** | Where reading links land after Button 1 sorts them out of your Inbox. You review here. |
-| **▶ Ready to Process** | Your "yes, process these" pile. Drag the keepers here; Button 2 reads from this list. |
+| **To Be Processed** | Where reading links land after Button 1. You review here, then Button 2 processes whatever's left. |
 | **Reading list that doesn't require system 2** ("System 1") | Lighter reads. **Feeds the podcast.** |
 | **Reading list that requires system 2** ("System 2") | Deep reads that need focused attention. You *read* these — they're **not** in the podcast. |
 | **Life Optimization** | Life / productivity / self-improvement reads. **Feeds the podcast.** |
 | **Listen Queue** | The ~20 hours of audio currently in your podcast. This list *is* the feed. |
-| **✓ Listened** | Your history. Drag finished episodes here when you're done. |
 
 After processing, each reading card gets a little tag at the top of its description like
 `[#3 · 12 min · why it matters]` — that's its rank, estimated reading time, and a one-line
@@ -76,12 +74,12 @@ This looks through your Inbox, picks out the things that are *reading material* 
 to-dos), and moves them to **To Be Processed**. Your actual to-dos stay in the Inbox,
 untouched.
 
-### 3. Review and pick
-Look through **To Be Processed**. For anything you genuinely want to read/hear, **drag it
-into "▶ Ready to Process."** Leave or delete the rest.
+### 3. Review and prune
+Look through **To Be Processed**. **Drag anything you *don't* want back to the Inbox** (or
+delete it). Whatever you leave in **To Be Processed** is what gets processed next.
 
 ### 4. Press **"Sort readables"** (Button 2)
-This is the workhorse. For everything in **▶ Ready to Process**, it:
+This is the workhorse. For everything left in **To Be Processed**, it:
 - reads the article,
 - ranks it by counterfactual impact and files it into the right reading list (System 1 /
   System 2 / Life Optimization) at the correct priority position,
@@ -93,12 +91,13 @@ run it and walk away.
 
 ### 5. Listen, then clear what you finish
 Listen top-down in Apple Podcasts. When you finish an episode:
-1. In Trello, drag its card from **Listen Queue → ✓ Listened**.
-2. Next time you press **"Sort readables,"** the finished episodes drop off the feed and
+1. In Trello, **archive its card** in the **Listen Queue** list (right-click → Archive, or
+   open the card → Archive).
+2. Next time you press **"Sort readables,"** the archived episodes drop off the feed and
    the queue refills with the next most-important reads.
 
-> You don't have to do this after every episode — finish a few, drag them to ✓ Listened,
-> then press the button once. The queue only refills when you run it.
+> You don't have to do this after every episode — finish a few, archive their cards, then
+> press the button once. The queue only refills when you run it.
 
 ---
 
@@ -109,7 +108,7 @@ They live on your Trello board (the **Automation / Butler** buttons, top of the 
 | Button | What it does | When to press |
 |--------|--------------|---------------|
 | **Extract readables** | Pulls reading links out of your Inbox → To Be Processed | After you've dumped a batch of links in the Inbox |
-| **Sort readables** | Processes ▶ Ready to Process → ranks, files, refreshes the podcast | After you've moved keepers into ▶ Ready to Process, or to refresh the queue after listening |
+| **Sort readables** | Processes To Be Processed → ranks, files, refreshes the podcast | After you've pruned To Be Processed, or to refresh the queue after listening |
 
 **One-time setup note (do this once if the buttons aren't working):** the buttons need to
 point at the live server. Edit each button (Automation → Buttons → Board Buttons → edit)
@@ -142,9 +141,9 @@ file (the `TRIGGER_TOKEN` line). Keep that token private.
 ```
 Collect links            → Trello Inbox
 Press "Extract readables"→ moves reading links to "To Be Processed"
-Review + drag keepers    → "▶ Ready to Process"
+Review + prune           → drag wrong ones back to Inbox
 Press "Sort readables"   → ranks, files, refreshes podcast (~20h)
 Listen top-down          → Apple Podcasts (top = most important)
-Finished an episode      → drag card: Listen Queue → ✓ Listened
+Finished an episode      → archive its card in Listen Queue
 Refresh the queue        → press "Sort readables" again
 ```

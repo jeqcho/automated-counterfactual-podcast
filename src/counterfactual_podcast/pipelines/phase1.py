@@ -3,8 +3,8 @@
 Reads the native Trello Inbox, classifies each card read-vs-do (cheap Haiku call on
 the title/URL — no extraction), and moves only the reading material into the review
 list. Todos/notes stay in the Inbox. Title-only: no markers are written here. Jay
-then reviews 'To Be Processed' and drags the keepers into '▶ Ready to Process' for
-Phase 2. Defaults to dry-run.
+then reviews 'To Be Processed', drags any wrong cards back to the Inbox, and presses
+'Sort readables' (Phase 2) to process whatever remains. Defaults to dry-run.
 """
 from __future__ import annotations
 
