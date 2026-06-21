@@ -5,6 +5,7 @@ import pytest
 
 from counterfactual_podcast import config
 from counterfactual_podcast.extract import (
+    _extract_main_text,
     est_minutes,
     extract,
     extract_from_text,
@@ -12,6 +13,28 @@ from counterfactual_podcast.extract import (
     is_hard,
 )
 from counterfactual_podcast.models import Card
+
+
+def _fake_extractor(precise_text, recall_text):
+    def ex(html, *, include_comments, favor_precision=False, favor_recall=False):
+        return recall_text if favor_recall else precise_text
+    return ex
+
+
+def test_extract_main_text_keeps_precise_when_substantial():
+    ex = _fake_extractor("x" * 800, "y" * 5000)
+    # precise pass is over the threshold -> used as-is, recall not preferred
+    assert _extract_main_text("<html>", extractor=ex) == "x" * 800
+
+
+def test_extract_main_text_falls_back_to_recall_when_precise_thin():
+    ex = _fake_extractor("x" * 50, "y" * 4000)  # precise nearly empty
+    assert _extract_main_text("<html>", extractor=ex) == "y" * 4000
+
+
+def test_extract_main_text_keeps_precise_if_recall_not_longer():
+    ex = _fake_extractor("x" * 50, "")  # both poor, recall no better
+    assert _extract_main_text("<html>", extractor=ex) == "x" * 50
 
 
 def test_est_minutes_rounds():

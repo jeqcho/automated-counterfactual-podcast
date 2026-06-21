@@ -98,6 +98,25 @@ def _arxiv_abs_to_pdf(url: str) -> str:
     return url
 
 
+# Below this many chars, favor_precision likely over-trimmed a real article; retry with
+# favor_recall and keep whichever is longer. (Comments are dropped in BOTH passes, so the
+# recall pass can't re-introduce the comment-bloat that include_comments=False prevents.)
+_MIN_EXTRACT_CHARS = 500
+
+
+def _extract_main_text(html: str, extractor=None) -> str:
+    """Two-pass article extraction: precise first, fall back to high-recall when the
+    precise pass comes back thin/empty. ``extractor`` is injectable for tests."""
+    if extractor is None:
+        import trafilatura
+        extractor = trafilatura.extract
+    precise = extractor(html, include_comments=False, favor_precision=True) or ""
+    if len(precise.strip()) >= _MIN_EXTRACT_CHARS:
+        return precise
+    recall = extractor(html, include_comments=False, favor_recall=True) or ""
+    return recall if len(recall.strip()) > len(precise.strip()) else precise
+
+
 # --- default real fetcher -------------------------------------------------
 
 def _default_fetch(url: str) -> dict:
@@ -150,12 +169,7 @@ def _default_fetch(url: str) -> dict:
     if not html:
         raise RuntimeError(f"could not fetch {url}")
 
-    # include_comments=False drops comment sections (WordPress/Disqus/etc) — without
-    # it trafilatura appends the entire comment thread, ballooning some articles to
-    # 10x their real length (e.g. an SSC post hit 551k chars = ~9h of audio of comments).
-    # favor_precision trims residual nav/boilerplate.
-    text = trafilatura.extract(html, include_comments=False,
-                               favor_precision=True) or ""
+    text = _extract_main_text(html)
     title = author = published = ""
     try:
         meta = trafilatura.extract_metadata(html)
