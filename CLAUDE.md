@@ -245,6 +245,21 @@ run) → review → `--apply`.
 
 ## Gotchas / learnings (append as you discover them)
 
+- **`.env` must override the shell — `load_dotenv(override=True)`.** A personal
+  `ANTHROPIC_API_KEY` exported in `~/.zshrc` (different account) silently shadowed the
+  project's `.env` key because plain `load_dotenv()` does NOT overwrite already-set env
+  vars. Symptom: "credit balance too low" 400s even though the `.env` key has credits —
+  you're using the wrong key. Fixed 2026-06-20 with `override=True` (no-op in the cloud:
+  no `.env` there, so Worker-forwarded vars are used). When debugging auth/credit errors,
+  FIRST check `config.ANTHROPIC_API_KEY[-4:]` vs `dotenv_values('.env')[...][-4:]`.
+- **Extraction is two-pass** (`extract._extract_main_text`): `favor_precision=True` first,
+  fall back to `favor_recall=True` when the precise pass is < 500 chars, keep the longer
+  (comments stripped in BOTH, so no bloat regression). `favor_precision` alone over-trims
+  (a DeepMind blog: 2.5k vs 10k recall). `scripts/reextract_failed.py` re-extracts cached
+  failures + regenerates digests — recovers stale failures (pre-UA-fix / transient). Most
+  surviving failures are genuinely hard: NYT/WSJ/Bloomberg paywalls, archive.ph (bot-blocks),
+  X/YouTube (JS/video), and homepage/about/redirect stubs with no article.
+
 - Trello "App" = the new name for "Power-Up"; token is generated via the
   `trello.com/1/authorize?...&key=...` URL, not a button.
 - Trello rate limits ~100 req/10s/token, 300/10s/key → client needs 429/Retry-After
