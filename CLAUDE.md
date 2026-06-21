@@ -259,6 +259,14 @@ run) → review → `--apply`.
   failures + regenerates digests — recovers stale failures (pre-UA-fix / transient). Most
   surviving failures are genuinely hard: NYT/WSJ/Bloomberg paywalls, archive.ph (bot-blocks),
   X/YouTube (JS/video), and homepage/about/redirect stubs with no article.
+- **Paywalled cards rank on their og:description abstract.** When full extraction fails,
+  `extract._metadata_fallback` fetches `og:title` + `og:description` and emits an
+  `kind="abstract"` row (`ok=False`, `est_minutes=ABSTRACT_DEFAULT_MINUTES`): `enrich` gives
+  it a real digest (not `[unreadable]`) so it ranks on the abstract, but `ok=False` keeps it
+  OUT of the podcast (no full text to voice). Reachable NYT/Bloomberg/some X+YT expose a
+  description; hard-403 NYT URLs don't (no UA/retry helps — IP-level block). Run 2026-06-20:
+  `scripts/recover_and_resort.py` moved 19 such System1 cards off the bottom into #1–#193.
+  NB: extraction is non-deterministic (a paywall may serve metadata one run, 403 the next).
 
 - Trello "App" = the new name for "Power-Up"; token is generated via the
   `trello.com/1/authorize?...&key=...` URL, not a button.
