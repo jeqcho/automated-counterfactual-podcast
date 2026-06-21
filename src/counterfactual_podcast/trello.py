@@ -135,15 +135,22 @@ class TrelloClient:
     def update_desc(self, card_id: str, desc: str):
         return self._request("PUT", f"/1/cards/{card_id}", desc=desc)
 
-    def set_rank_marker(self, card: Card, rank, est_min, why: str) -> str:
-        """Idempotently set the ranking marker at the top of the card desc.
+    def set_rank_marker(self, card: Card, rank, est_min, digest: str = "") -> str:
+        """Idempotently set the ranking marker at the top of the card desc: a one-line
+        rank tag (``[#rank · est min]``) followed by the full impact digest, for glance
+        reading on the board.
 
-        Strips any existing ``<!--cf-->...<!--/cf-->`` block first so repeated
+        The digest written here is a DERIVED VIEW of the cache (the single source of
+        truth). The pipeline never reads it back — it is overwritten from the cache on
+        every run. Strips any existing ``<!--cf-->...<!--/cf-->`` block first so repeated
         calls never duplicate the marker. Returns the new desc string.
         """
         existing = card.desc or ""
         stripped = _MARKER_RE.sub("", existing).lstrip()
-        marker = f"<!--cf-->[#{rank} · {est_min} min · {why}]<!--/cf-->"
+        tag = f"[#{rank} · {est_min} min]"
+        body = (digest or "").strip()
+        inner = f"{tag}\n\n{body}" if body else tag
+        marker = f"<!--cf-->{inner}\n<!--/cf-->"
         new_desc = f"{marker}\n\n{stripped}" if stripped else marker
         self.update_desc(card.id, new_desc)
         return new_desc

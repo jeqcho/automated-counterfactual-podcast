@@ -82,6 +82,31 @@ def test_set_rank_marker_idempotent():
 
 
 @responses.activate
+def test_set_rank_marker_embeds_full_multiline_digest():
+    captured = {}
+
+    def cb(request):
+        from urllib.parse import parse_qs, urlparse
+        captured["desc"] = parse_qs(urlparse(request.url).query)["desc"][0]
+        return (200, {}, "{}")
+
+    responses.add_callback(responses.PUT, f"{API_BASE}/1/cards/c1", callback=cb)
+    c = _client()
+    digest = '# Digest: "The Void"\n\n**Core topic:** LLMs lack a coherent character.\n**Key claims:** (1) ...'
+    out = c.set_rank_marker(Card(id="c1", name="n", desc="my note"), 39, 28, digest)
+
+    # Rank tag on its own; full digest (all lines) embedded; note preserved.
+    assert "[#39 · 28 min]" in out
+    assert "**Core topic:**" in out and "**Key claims:**" in out
+    assert "my note" in out
+    # Re-marking with a new multiline digest replaces cleanly (no marker pile-up).
+    second = c.set_rank_marker(Card(id="c1", name="n", desc=out), 5, 10, "short digest")
+    assert second.count("<!--cf-->") == 1 and second.count("<!--/cf-->") == 1
+    assert "Core topic" not in second and "[#5 · 10 min]" in second
+    assert "my note" in second
+
+
+@responses.activate
 def test_429_retry_after_then_success():
     url = f"{API_BASE}/1/members/me"
     responses.add(

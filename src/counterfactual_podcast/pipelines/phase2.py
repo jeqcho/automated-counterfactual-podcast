@@ -39,7 +39,7 @@ async def run_phase2(client, cache, enricher, classifier, comparator,
             idx = next(i for i, f in enumerate(ordered) if f.card_id == feats.card_id)
             rank = idx + 1
             client.move_card(card.id, list_id, pos=_insertion_pos(ordered, idx, pos_by_id))
-            client.set_rank_marker(card, rank, feats.est_minutes, (feats.digest or "")[:80])
+            client.set_rank_marker(card, rank, feats.est_minutes, feats.digest or "")
         routed.append({"card_id": card.id, "label": label, "rank": rank})
         if log:
             log.info(f"  {card.name[:50]} -> {label}" + (f" @#{rank}" if rank else ""))

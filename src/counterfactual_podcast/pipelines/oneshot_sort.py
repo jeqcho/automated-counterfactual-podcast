@@ -88,7 +88,7 @@ async def sort_list(client, cache, enricher, comparator, list_id, *,
         client.set_card_position(f.card_id, (i + 1) * 1000.0)
         card = by_id.get(f.card_id)
         if card is not None:
-            client.set_rank_marker(card, i + 1, f.est_minutes, _why(f))
+            client.set_rank_marker(card, i + 1, f.est_minutes, f.digest or "")
     summary["applied"] = True
     return summary
 
