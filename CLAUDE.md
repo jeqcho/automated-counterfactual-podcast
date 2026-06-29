@@ -423,6 +423,15 @@ run) → review → `--apply`.
     `instance_type`** (standard-2/4) raises the ceiling but doesn't fix the 0.5-vCPU health
     starvation if that's the trigger. (5) **Hoist `get_cards`/`aenrich_many(existing)` out of the
     per-card loop** (enrich once up front, 50-wide, then route) — also removes the repeated work.
+- **Phases are MUTUALLY EXCLUSIVE — the trigger refuses to start one while the other runs
+  (2026-06-28).** Both phases pull the same R2 `state/cache.sqlite3` into the same local path
+  at start and push it back at finish, so running them concurrently races on that file (SQLite
+  corruption / clobbered work). `server.start_run` is now a GLOBAL mutex: if anything is in
+  flight it returns `(False, message)` and the endpoint replies **HTTP 409** with a friendly
+  "wait until 'X' finishes" message (labels: phase1="Extract readables", phase2="Sort
+  readables"). So pressing button 1 while button 2 runs (or vice versa) safely fails with a
+  warning instead of corrupting the cache. (In-process flags + `threading.Lock`; correct
+  because `max_instances:1` = one container/process.)
 - **Cache is keyed by card identity only** (`extracted`/`digest`/`audio` PK `card_id`,
   `pairwise` PK `(a_id,b_id)`) — NO list/pos column. So moving cards between lists between
   Phase 1 and Phase 2 never stales the cache; list membership/order is read LIVE from Trello.

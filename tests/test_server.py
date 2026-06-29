@@ -81,9 +81,33 @@ async def test_run_named_invokes_runner(monkeypatch, no_r2_sync):
     assert called["n"] == 1
 
 
-def test_start_run_skips_when_already_running():
+def test_start_run_skips_when_same_phase_already_running():
     server._running["phase1"] = True
     try:
-        assert server.start_run("phase1") is False
+        started, msg = server.start_run("phase1")
+        assert started is False
+        assert "already running" in msg
+    finally:
+        server._running["phase1"] = False
+
+
+def test_start_run_blocks_other_phase_while_one_runs():
+    """Cross-phase mutex: can't start phase2 while phase1 runs (shared cache)."""
+    server._running["phase1"] = True
+    try:
+        started, msg = server.start_run("phase2")
+        assert started is False
+        assert "Sort readables" in msg and "Extract readables" in msg
+        assert server._running["phase2"] is False   # must NOT have flipped on
+    finally:
+        server._running["phase1"] = False
+
+
+def test_phase2_endpoint_returns_409_when_phase1_running(client):
+    server._running["phase1"] = True
+    try:
+        r = client.post("/phase2", headers={"X-Trigger-Token": "secret123"})
+        assert r.status_code == 409
+        assert "still running" in r.json()["detail"]
     finally:
         server._running["phase1"] = False

@@ -76,12 +76,33 @@ async def run_named(name: str) -> None:
         await asyncio.to_thread(push_cache_to_r2)
 
 
-def start_run(name: str) -> bool:
+# Friendly button labels for the warning message Jay sees.
+_PHASE_LABELS = {"phase1": "Extract readables", "phase2": "Sort readables"}
+
+
+def start_run(name: str) -> tuple[bool, str]:
     """Start ``run_named(name)`` in a daemon thread with its own event loop so the FastAPI
-    request loop stays responsive. Returns False if a run of that phase is already in flight."""
+    request loop stays responsive.
+
+    GLOBAL mutex (not per-phase): a phase will NOT start while ANY phase is already in
+    flight. Both phases pull the SAME R2 cache file (``state/cache.sqlite3``) into the same
+    local path at start and push it back at finish — running two at once races on that file
+    and can corrupt the cache or clobber the other run's work. So if anything is running, we
+    refuse and tell the caller to wait.
+
+    Returns ``(started, message)``."""
     with _state_lock:
-        if _running[name]:
-            return False
+        busy = next((p for p, on in _running.items() if on), None)
+        if busy is not None:
+            busy_label = _PHASE_LABELS.get(busy, busy)
+            if busy == name:
+                return False, (f"'{busy_label}' is already running — please wait for it to "
+                               f"finish before pressing again.")
+            this_label = _PHASE_LABELS.get(name, name)
+            return False, (
+                f"Can't start '{this_label}': '{busy_label}' is still running. They share one "
+                f"cache, so running both at once could corrupt it. Please wait until "
+                f"'{busy_label}' finishes, then try again.")
         _running[name] = True
 
     def worker() -> None:
@@ -94,7 +115,7 @@ def start_run(name: str) -> bool:
                 _running[name] = False
 
     threading.Thread(target=worker, name=f"pipeline-{name}", daemon=True).start()
-    return True
+    return True, f"{name} started"
 
 
 def _running_snapshot() -> dict:
@@ -119,14 +140,17 @@ async def logs(n: int = 200, x_trigger_token: str | None = Header(default=None))
 @app.post("/phase1")
 async def phase1(x_trigger_token: str | None = Header(default=None)):
     _check_token(x_trigger_token)
-    if not start_run("phase1"):
-        return {"status": "phase1 already running"}
-    return {"status": "phase1 started"}
+    started, message = start_run("phase1")
+    if not started:
+        # 409 Conflict — the run is busy; the message tells Jay to wait.
+        raise HTTPException(status_code=409, detail=message)
+    return {"status": message}
 
 
 @app.post("/phase2")
 async def phase2(x_trigger_token: str | None = Header(default=None)):
     _check_token(x_trigger_token)
-    if not start_run("phase2"):
-        return {"status": "phase2 already running"}
-    return {"status": "phase2 started"}
+    started, message = start_run("phase2")
+    if not started:
+        raise HTTPException(status_code=409, detail=message)
+    return {"status": message}
