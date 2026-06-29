@@ -33,17 +33,28 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
         log.info(f"inbox {len(cards)} cards: moving {len(linked)} with links -> "
                  f"'{config.TO_BE_PROCESSED_LIST_NAME}', keeping {len(no_link)} link-less in inbox")
 
-    moved = []
+    moved, failed = [], []
     for card in linked:
         if apply:
-            # cross-board move: native Inbox (hidden board) -> Home base list
-            client.move_card(card.id, dest, pos="bottom", board_id=config.BOARD_ID)
+            try:
+                # cross-board move: native Inbox (hidden board) -> Home base list.
+                # retry_unauthorized: the Inbox board intermittently 401s.
+                client.move_card(card.id, dest, pos="bottom", board_id=config.BOARD_ID,
+                                 retry_unauthorized=True)
+            except Exception as e:  # noqa: BLE001 — one stubborn card must not abort the batch
+                failed.append({"card_id": card.id, "name": card.name})
+                if log:
+                    log.warning(f"  [skip] {card.name[:55]}: {type(e).__name__}: {str(e)[:60]}")
+                continue
         moved.append({"card_id": card.id, "name": card.name})
         if log:
             log.info(f"  [move] {card.name[:60]}")
 
+    if log and failed:
+        log.warning(f"{len(failed)} cards failed to move (left in Inbox), retry later")
     return {"inbox": len(cards), "with_links": len(linked), "no_link_kept": len(no_link),
-            "moved_to_review": len(moved), "moved": moved, "applied": apply}
+            "moved_to_review": len(moved), "failed": len(failed),
+            "moved": moved, "failed_cards": failed, "applied": apply}
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:

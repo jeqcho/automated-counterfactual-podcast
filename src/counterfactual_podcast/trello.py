@@ -186,14 +186,20 @@ class TrelloClient:
     def archive_card(self, card_id: str):
         return self._request("PUT", f"/1/cards/{card_id}", closed="true")
 
-    def move_card(self, card_id: str, list_id: str, pos="bottom", board_id: str | None = None):
+    def move_card(self, card_id: str, list_id: str, pos="bottom", board_id: str | None = None,
+                  retry_unauthorized: bool = False):
         """Move a card to ``list_id``. For a CROSS-board move (e.g. out of the native
         Inbox, which lives on a hidden board, into a Home base list) you must also pass
-        ``board_id`` — Trello rejects an idList that isn't on the card's current board."""
+        ``board_id`` — Trello rejects an idList that isn't on the card's current board.
+
+        ``retry_unauthorized``: retry on 401 (set for Inbox moves — touching the Inbox board
+        intermittently 401s, same flaky auth as the inbox read; see ``get_inbox_cards``)."""
         params = {"idList": list_id, "pos": pos}
         if board_id:
             params["idBoard"] = board_id
-        return self._request("PUT", f"/1/cards/{card_id}", **params)
+        rc = (401,) if retry_unauthorized else ()
+        mt = 10 if retry_unauthorized else None
+        return self._request("PUT", f"/1/cards/{card_id}", _retry_codes=rc, _max_tries=mt, **params)
 
     def set_name(self, card_id: str, name: str):
         """Rename a card (used to replace a raw-URL name with the page title)."""

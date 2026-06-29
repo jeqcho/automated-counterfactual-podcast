@@ -16,7 +16,7 @@ class FakeClient:
     def get_inbox_cards(self):
         return list(self._inbox)
 
-    def move_card(self, card_id, list_id, pos="bottom", board_id=None):
+    def move_card(self, card_id, list_id, pos="bottom", board_id=None, retry_unauthorized=False):
         self.moved.append((card_id, list_id))
 
 
