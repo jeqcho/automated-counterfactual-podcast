@@ -196,12 +196,13 @@ run) → review → `--apply`.
   Inbox. **Phase 2** (`pipelines/phase2.py`) then drains `To Be Processed` (the SAME list —
   no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
   queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
-- **Trello buttons (Jay buying Premium):** Butler HTTP requests (Premium) let two board
-  buttons POST to a local FastAPI **trigger server** (`server.py`, `/phase1` + `/phase2`,
-  `X-Trigger-Token` auth), exposed to Trello via a **Cloudflare Tunnel**. Button press →
-  runs the phase `--apply`. Setup: `reports/trigger-setup.md`. (Free-plan fallback was
-  Butler card-moves + a poller; native Inbox isn't reachable by Butler, so a Phase-1
-  button needs either Premium-HTTP or links in a board list.)
+- **Trello buttons (Butler Premium):** two board buttons issue Butler HTTP-request POSTs to
+  the FastAPI trigger server (`server.py`, `/phase1` + `/phase2`, `X-Trigger-Token` auth),
+  which runs the phase `--apply`. The server now lives in the **Cloudflare Container** behind
+  the Worker — buttons POST to `…workers.dev/phase1|/phase2` (NOT the old local
+  `cloudflared` tunnel, which is dead and removed). Phases are mutually exclusive (see the
+  cross-phase mutex gotcha). (The old local-tunnel setup guide `reports/trigger-setup.md` and
+  `scripts/run_server.sh` were deleted 2026-06-28 — the local-uvicorn-+-tunnel path is gone.)
 
 ## Key facts & IDs
 
