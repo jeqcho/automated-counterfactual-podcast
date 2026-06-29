@@ -368,6 +368,37 @@ run) → review → `--apply`.
   Once it completes + pushes cache to R2, future runs are cache-hit-fast. (Possible optimization:
   MERGE the two already-sorted lists (~n cross-list comparisons) instead of a full re-sort
   (~n log n) — check `listen_queue.ensure_listen_queue`.)
+- **⚠️ THE CONTAINER GETS KILLED MID-RUN ON A LARGE *UNCACHED* LIST (2026-06-28) — and the
+  kill is silent + unrecoverable, causing a re-press loop.** Symptom: press Phase 2 → it
+  routes ~15-20 cards → container restarts (`/logs` ring buffer goes EMPTY, `running` flips
+  False, `wrangler containers info` shows a fresh instance) → only ~19/138 cards landed on the
+  board → **the R2 `state/cache.sqlite3` mtime did NOT advance** (the `finally`
+  `push_cache_to_r2` in `server.run_named` never ran because the process was SIGKILLed, not
+  exception-unwound). Net effect: every re-press redoes the SAME heavy work, dies at the same
+  spot, and persists nothing — an infinite loop the button can't escape.
+  - **Root cause:** `phase2.py`'s per-card loop calls `enricher.aenrich_many(existing)` on the
+    *whole destination list*. The first card routed to a list with **no cached digests**
+    (System 2 had 0/280 cached) triggers a **50-wide concurrent extraction** of all 280 cards
+    (`MAX_FETCH_CONCURRENCY`/`MAX_LLM_CONCURRENCY` default = 50, NOT overridden in the cloud).
+    50 simultaneous trafilatura/lxml parses (lxml trees are ~10-30× the HTML size in RAM) +
+    50 in-flight HTTP bodies blow past **`standard-1`'s 4 GB**, AND peg its **0.5 vCPU** for
+    ~13 min straight, starving the FastAPI `/health` endpoint. So the container dies by **OOM
+    and/or Cloudflare health-reaping** (couldn't distinguish — `health.errors` was `[]`,
+    container logs don't reach `wrangler tail`, ring buffer cleared on restart). The
+    daemon-thread fix (see "never run the pipeline on the event loop") prevents *event-loop*
+    starvation but NOT 50 CPU-bound worker threads pegging 0.5 vCPU under the GIL.
+  - **Why a cached list is fine:** Life Optim (47 cached) and System 1 (257 cached) routed with
+    no stall — `aenrich_many` is all cache hits, near-zero CPU/RAM. Only the *uncached* bulk
+    enrichment is lethal. So the danger is specifically: a big list whose digests aren't in R2 yet.
+  - **Fixes (in rough priority):** (1) **Warm the cache off-Mac first** — run the enrichment/
+    full Phase 2 LOCALLY (full RAM/CPU, can't be reaped), then it pushes the warm cache to R2 and
+    the cloud button stays light forever after. This is the escape hatch we used. (2) **Lower
+    cloud concurrency** — set `MAX_FETCH_CONCURRENCY`/`MAX_LLM_CONCURRENCY` to ~8-12 via wrangler
+    vars so a cold list can't spike RAM/CPU. (3) **Checkpoint the cache mid-run** (periodic
+    `push_cache_to_r2`) so a kill doesn't lose everything → re-press resumes. (4) **Bigger
+    `instance_type`** (standard-2/4) raises the ceiling but doesn't fix the 0.5-vCPU health
+    starvation if that's the trigger. (5) **Hoist `get_cards`/`aenrich_many(existing)` out of the
+    per-card loop** (enrich once up front, 50-wide, then route) — also removes the repeated work.
 - **Cache is keyed by card identity only** (`extracted`/`digest`/`audio` PK `card_id`,
   `pairwise` PK `(a_id,b_id)`) — NO list/pos column. So moving cards between lists between
   Phase 1 and Phase 2 never stales the cache; list membership/order is read LIVE from Trello.
