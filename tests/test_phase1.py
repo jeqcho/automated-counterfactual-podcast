@@ -10,14 +10,11 @@ class FakeClient:
         self._inbox = inbox
         self.moved = []
 
-    def inbox_list_id(self):
-        return "INBOX"
-
     def ensure_list(self, name):
         return "TBP"
 
-    def get_cards(self, list_id):
-        return list(self._inbox) if list_id == "INBOX" else []
+    def get_inbox_cards(self):
+        return list(self._inbox)
 
     def move_card(self, card_id, list_id, pos="bottom", board_id=None):
         self.moved.append((card_id, list_id))

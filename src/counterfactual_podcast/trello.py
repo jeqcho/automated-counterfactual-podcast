@@ -57,14 +57,18 @@ class TrelloClient:
             if wait > 0:
                 self._sleep(wait)
 
-    def _request(self, method: str, path: str, **params):
+    def _request(self, method: str, path: str, _retry_codes=(), _max_tries=None, **params):
+        """``_retry_codes``: extra HTTP statuses to retry with backoff (besides 429). The
+        native Inbox board intermittently 401s (~half the time — flaky Trello auth/throttle),
+        so the inbox read passes ``_retry_codes=(401,)`` to retry through it."""
         params = dict(params)
         params["key"] = self.key
         params["token"] = self.token
         url = f"{API_BASE}{path}"
 
+        tries = _max_tries or _MAX_TRIES
         delay = _DEFAULT_RETRY_AFTER
-        for attempt in range(_MAX_TRIES):
+        for attempt in range(tries):
             self._throttle()
             resp = self._session.request(method, url, params=params)
             if resp.status_code == 429:
@@ -74,7 +78,11 @@ class TrelloClient:
                 except (TypeError, ValueError):
                     wait = delay
                 self._sleep(wait)
-                delay *= 2  # exponential backoff
+                delay = min(delay * 2, 8.0)  # exponential backoff
+                continue
+            if resp.status_code in _retry_codes and attempt < tries - 1:
+                self._sleep(delay)
+                delay = min(delay * 2, 8.0)
                 continue
             resp.raise_for_status()
             if not resp.content:
@@ -94,29 +102,27 @@ class TrelloClient:
         external = [u for u in https if "trello.com" not in u]
         return (external or https or [""])[0]
 
+    def _row_to_card(self, c: dict, list_id: str) -> Card:
+        pos = c.get("pos", 0.0)
+        try:
+            pos = float(pos)
+        except (TypeError, ValueError):
+            pos = 0.0
+        return Card(
+            id=c["id"],
+            name=c.get("name", ""),
+            desc=c.get("desc", "") or "",
+            url=self._best_attachment_url(c.get("attachments")),
+            list_id=list_id,
+            pos=pos,
+        )
+
     def get_cards(self, list_id: str) -> list[Card]:
         data = self._request(
             "GET", f"/1/lists/{list_id}/cards",
             fields="name,desc,pos", attachments="true", attachment_fields="url",
         )
-        cards: list[Card] = []
-        for c in data or []:
-            pos = c.get("pos", 0.0)
-            try:
-                pos = float(pos)
-            except (TypeError, ValueError):
-                pos = 0.0
-            cards.append(
-                Card(
-                    id=c["id"],
-                    name=c.get("name", ""),
-                    desc=c.get("desc", "") or "",
-                    url=self._best_attachment_url(c.get("attachments")),
-                    list_id=list_id,
-                    pos=pos,
-                )
-            )
-        return cards
+        return [self._row_to_card(c, list_id) for c in data or []]
 
     def inbox_list_id(self) -> str:
         """Return the native Trello Inbox list id.
@@ -126,6 +132,28 @@ class TrelloClient:
         """
         data = self._request("GET", "/1/members/me", fields="inbox")
         return data["inbox"]["idList"]
+
+    def get_inbox_cards(self) -> list[Card]:
+        """Read the native Trello Inbox's cards.
+
+        The Inbox lives on a hidden board whose ``/1/lists/{id}/cards`` endpoint returns
+        **401 unauthorized** (Trello locks the Inbox down), so the normal ``get_cards`` path
+        fails on it. The BOARD endpoint ``/1/boards/{idBoard}/cards`` DOES work — read the
+        inbox board's cards and keep only those in the inbox list. Returns ``[]`` if the
+        inbox can't be resolved. (Discovered 2026-06-28 when Phase 1 started 401ing.)
+        """
+        me = self._request("GET", "/1/members/me", fields="inbox") or {}
+        inbox = me.get("inbox") or {}
+        list_id, board_id = inbox.get("idList"), inbox.get("idBoard")
+        if not (list_id and board_id):
+            return []
+        data = self._request(
+            "GET", f"/1/boards/{board_id}/cards",
+            _retry_codes=(401,), _max_tries=10,
+            fields="name,desc,pos,idList", attachments="true", attachment_fields="url",
+        )
+        return [self._row_to_card(c, list_id) for c in data or []
+                if c.get("idList") == list_id]
 
     # -- card mutations -----------------------------------------------------
     def set_card_position(self, card_id: str, pos):

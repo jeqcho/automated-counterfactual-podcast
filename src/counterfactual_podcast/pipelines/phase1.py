@@ -14,7 +14,6 @@ import asyncio
 
 from .. import config
 from ..extract import find_url
-from ..inbox import resolve_inbox_list_id
 
 
 def _has_link(card) -> bool:
@@ -24,9 +23,9 @@ def _has_link(card) -> bool:
 
 
 async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
-    src = resolve_inbox_list_id(client)
     dest = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
-    cards = client.get_cards(src)
+    # The Inbox 401s on /lists/{id}/cards; get_inbox_cards reads it via the board endpoint.
+    cards = client.get_inbox_cards()
 
     linked = [c for c in cards if _has_link(c)]
     no_link = [c for c in cards if not _has_link(c)]
