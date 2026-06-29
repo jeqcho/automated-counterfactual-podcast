@@ -130,8 +130,13 @@ def publish(
     Returns:
         dict with prefix, feed_url, feed_xml, uploaded (count or 0).
     """
+    # Use the PINNED prefix (config.PODCAST_PREFIX) so the feed URL is STABLE across runs —
+    # the same place make_audio_checker looks for already-synthesized audio. Only fall back to
+    # a random uuid4 when no prefix is configured at all. (Before this, publish ALWAYS randomized
+    # the prefix and ignored PODCAST_PREFIX, so every run published an orphan feed + audio to a
+    # fresh path and the subscribed URL never updated — 2026-06-28.)
     if prefix is None:
-        prefix = uuid.uuid4().hex
+        prefix = config.PODCAST_PREFIX or uuid.uuid4().hex
 
     public_base = (config.R2_PUBLIC_BASE or "").rstrip("/")
     xml = build_feed(episodes, public_base=public_base, prefix=prefix)
