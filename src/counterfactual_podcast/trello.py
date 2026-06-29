@@ -29,6 +29,13 @@ _WINDOW = 1.0
 _MAX_TRIES = 5
 _DEFAULT_RETRY_AFTER = 1.0
 
+# (connect, read) timeout in seconds. CRITICAL: without this, a hung/silently-dropped TCP
+# connection makes ``requests`` block FOREVER. These sync calls run inside the async pipeline
+# (run_phase2 / ensure_listen_queue call get_cards/move_card synchronously), so one stuck
+# request wedges the whole asyncio event loop — even the Anthropic 90s timeout can't fire,
+# and the run deadlocks at 0% CPU. A timeout turns that into a retryable error instead.
+_REQUEST_TIMEOUT = (10, 30)
+
 # Idempotent ranking marker placed at the TOP of a card description.
 _MARKER_RE = re.compile(r"<!--cf-->.*?<!--/cf-->\s*", re.DOTALL)
 
@@ -70,7 +77,16 @@ class TrelloClient:
         delay = _DEFAULT_RETRY_AFTER
         for attempt in range(tries):
             self._throttle()
-            resp = self._session.request(method, url, params=params)
+            try:
+                resp = self._session.request(method, url, params=params,
+                                             timeout=_REQUEST_TIMEOUT)
+            except (requests.Timeout, requests.ConnectionError):
+                # A network hang/drop: retry with backoff instead of blocking forever.
+                if attempt < tries - 1:
+                    self._sleep(delay)
+                    delay = min(delay * 2, 8.0)
+                    continue
+                raise
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
                 try:

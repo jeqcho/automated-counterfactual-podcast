@@ -173,3 +173,54 @@ def test_move_card_sends_idlist_and_pos():
     c.move_card("c1", "L2", pos="bottom")
     url = responses.calls[0].request.url
     assert "idList=L2" in url and "pos=bottom" in url
+
+
+@responses.activate
+def test_request_retries_on_timeout_then_succeeds():
+    # A hung connection must surface as a retryable Timeout (not block forever and wedge the
+    # async event loop). First attempt times out, second succeeds.
+    import requests
+
+    responses.add(responses.GET, f"{API_BASE}/1/x", body=requests.exceptions.Timeout())
+    responses.add(responses.GET, f"{API_BASE}/1/x", json={"ok": True}, status=200)
+    c = _client()
+    assert c._request("GET", "/1/x") == {"ok": True}
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_request_passes_timeout_to_requests():
+    # Guard: every request MUST carry a finite timeout, else requests blocks indefinitely.
+    from counterfactual_podcast.trello import _REQUEST_TIMEOUT
+
+    captured = {}
+
+    def cb(request):
+        captured["timeout"] = getattr(request, "req_kwargs", {})
+        return (200, {}, "{}")
+
+    responses.add(responses.GET, f"{API_BASE}/1/x", json={"ok": True}, status=200)
+    c = _client()
+    # Patch the session.request to assert the timeout kwarg is forwarded.
+    orig = c._session.request
+    seen = {}
+
+    def wrapped(method, url, **kw):
+        seen["timeout"] = kw.get("timeout")
+        return orig(method, url, **kw)
+
+    c._session.request = wrapped
+    c._request("GET", "/1/x")
+    assert seen["timeout"] == _REQUEST_TIMEOUT
+
+
+@responses.activate
+def test_request_raises_after_timeout_retries_exhausted():
+    import pytest
+    import requests
+
+    for _ in range(5):
+        responses.add(responses.GET, f"{API_BASE}/1/x", body=requests.exceptions.ConnectionError())
+    c = _client()
+    with pytest.raises(requests.ConnectionError):
+        c._request("GET", "/1/x")
