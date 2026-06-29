@@ -52,9 +52,20 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
 
     if log and failed:
         log.warning(f"{len(failed)} cards failed to move (left in Inbox), retry later")
+
+    # Dedup 'To Be Processed' AFTER moving: archive any card whose URL already appears in the
+    # reading lists / Listen Queue or earlier in the list, so the same article never fans out
+    # into the lists twice. (Whole-board dedup; conservative URL match — see dedup.py.)
+    from ..dedup import dedup_list
+    queue_id = client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
+    against = [config.SYSTEM1_LIST_ID, config.SYSTEM2_LIST_ID,
+               config.LIFE_OPTIM_LIST_ID, queue_id]
+    dedup = dedup_list(client, dest, against, apply=apply, log=log)
+
     return {"inbox": len(cards), "with_links": len(linked), "no_link_kept": len(no_link),
             "moved_to_review": len(moved), "failed": len(failed),
-            "moved": moved, "failed_cards": failed, "applied": apply}
+            "deduped": dedup["archived"], "moved": moved, "failed_cards": failed,
+            "dedup": dedup, "applied": apply}
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:
@@ -71,7 +82,8 @@ def main() -> None:
     log = setup_logging("phase1")
     res = asyncio.run(_build_and_run(args.apply, log=log))
     log.info(f"inbox={res['inbox']} -> moved={res['moved_to_review']} "
-             f"link_less_kept={res['no_link_kept']} applied={res['applied']}")
+             f"deduped={res['deduped']} link_less_kept={res['no_link_kept']} "
+             f"applied={res['applied']}")
 
 
 if __name__ == "__main__":

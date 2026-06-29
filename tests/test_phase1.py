@@ -16,6 +16,13 @@ class FakeClient:
     def get_inbox_cards(self):
         return list(self._inbox)
 
+    def get_cards(self, list_id):
+        return []  # empty board -> dedup is a no-op in these move-focused tests
+
+    def archive_card(self, card_id):
+        self.archived = getattr(self, "archived", [])
+        self.archived.append(card_id)
+
     def move_card(self, card_id, list_id, pos="bottom", board_id=None, retry_unauthorized=False):
         self.moved.append((card_id, list_id))
 
