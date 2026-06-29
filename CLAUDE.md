@@ -214,9 +214,19 @@ run) → review → `--apply`.
 - Target lists: System 1 (lighter, "doesn't require system 2") =
   `683cb9f4387706ad70dc4299` (301 cards); System 2 (deep) =
   `683cb9e94b55936c9e9505a3` (272); Life Optimization = `69cffff85c64bd09a7c8cd7d` (50).
-- **Trello Inbox:** do NOT call `/members/me/inbox` (401). Use
-  `GET /1/members/me?fields=inbox` → `inbox.idList`, then treat it as a normal list.
-  Resolve dynamically at runtime (don't hardcode the account-specific id).
+- **Trello Inbox (UPDATED 2026-06-28 — the Inbox board is now auth-locked + flaky):** do NOT
+  call `/members/me/inbox` (401). Resolve via `GET /1/members/me?fields=inbox` →
+  `inbox.idList` + `inbox.idBoard` (dynamic; don't hardcode the account-specific id). But you
+  can NO LONGER "treat idList as a normal list" — `GET /1/lists/{inbox_idList}/cards` returns
+  **401 unauthorized**. Read the Inbox via the BOARD endpoint instead:
+  `GET /1/boards/{inbox_idBoard}/cards` filtered to `idList == inbox_idList`
+  (`TrelloClient.get_inbox_cards`). And that board endpoint — plus moving a card OUT of the
+  Inbox (`PUT /1/cards/{id}` with `idBoard`) — **intermittently 401s ~half the time** (flaky
+  Trello auth/throttle on the Inbox board), so both paths use **retry-on-401**: `_request(...,
+  _retry_codes=(401,), _max_tries=10)` and `move_card(retry_unauthorized=True)`. Phase 1 also
+  wraps each move in try/except so one stubborn card is skipped, not the whole batch. WRITING
+  INTO the Inbox is still impossible (move-in + create-in both hard-401 — see the "can't put
+  cards back in the Inbox" finding).
 - Listen queue tops up from **System 1 + Life Optim only** (System 2 excluded — needs
   focused reading). 20h is a **soft floor** (capped by extractable-content yield).
 - `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ANTHROPIC_API_KEY`,
