@@ -67,6 +67,12 @@ CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-4-8
 CLAUDE_MODEL_DIGEST = os.environ.get("CLAUDE_MODEL_DIGEST", "claude-haiku-4-5-20251001")  # enrichment digests
 MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "50"))     # concurrent Anthropic calls
 MAX_FETCH_CONCURRENCY = int(os.environ.get("MAX_FETCH_CONCURRENCY", "50"))  # concurrent URL fetches (threads)
+# Per-request Anthropic timeout + retries. The SDK default (600s) is FAR too long for our tiny
+# calls (digests 256 tok, comparisons 300 tok return in <10s): a single network hang on one
+# comparison froze the SEQUENTIAL queue merge for 16+ min (2026-06-28). A short read timeout +
+# generous retries makes a hung call fail fast and recover instead of stalling the whole sort.
+ANTHROPIC_TIMEOUT_SECONDS = float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "90"))
+ANTHROPIC_MAX_RETRIES = int(os.environ.get("ANTHROPIC_MAX_RETRIES", "5"))
 # Hard cap on article text sent to Haiku per digest — bounds worst-case cost so one
 # giant page can't blow up spend. 24000 chars ≈ 6k tokens ≈ ~$0.006/card on Haiku.
 DIGEST_TEXT_CAP_CHARS = int(os.environ.get("DIGEST_TEXT_CAP_CHARS", "24000"))

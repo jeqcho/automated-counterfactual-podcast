@@ -88,7 +88,9 @@ class Classifier:
             self.profile_doc = config.PROFILE_DOC.read_text(encoding="utf-8")
         if client is None:
             from anthropic import AsyncAnthropic
-            client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+            client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY,
+                                    timeout=config.ANTHROPIC_TIMEOUT_SECONDS,
+                                    max_retries=config.ANTHROPIC_MAX_RETRIES)
         self.client = client
 
     def _system(self):
