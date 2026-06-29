@@ -26,23 +26,22 @@ uv run python -m counterfactual_podcast.pipelines.oneshot_sort --list life_optim
 
 The Inbox mixes reading links with todos, so intake is split:
 
-**Phase 1 — triage Inbox → To Be Processed** (moves only reading material):
+**Phase 1 — move Inbox links → To Be Processed** (LLM-free; press the *Extract readables*
+button, or run locally):
 ```bash
 ./scripts/run_phase1.sh            # dry-run preview
-./scripts/run_phase1.sh --apply    # actually move reading-material cards
+./scripts/run_phase1.sh --apply    # move EVERY linked Inbox card (link-less todos stay)
 ```
-Then **review** the `To Be Processed` list in Trello and drag any mistakes back to the
-Inbox. Drag the keepers into the **`▶ Ready to Process`** list — that's the Phase 2 "go".
+Then **review** the `To Be Processed` list in Trello and drag any mistakes back to the Inbox.
+Whatever remains is Phase 2's input — no separate "Ready to Process" list.
 
-**Phase 2 — drain ▶ Ready to Process → route + rank + queue + publish**:
+**Phase 2 — drain To Be Processed → route + rank + queue + publish** (press *Sort readables*;
+runs in the Cloudflare container). Local recovery escape hatch:
 ```bash
-./scripts/run_phase2.sh            # dry-run preview
-./scripts/run_phase2.sh --apply    # route each card to System1/2/LifeOptim at its
-                                   # impact rank, top up the 20h queue, publish RSS
+./scripts/run_phase2_local.sh      # pull cache from R2, run --apply locally, push cache back
 ```
-Phase 2 is a no-op when `▶ Ready to Process` is empty, so it's safe to run on a schedule
-(it processes whatever you've dragged in since last time). System 2 cards are routed but
-never enter the listen queue.
+Phase 2 is a no-op when `To Be Processed` is empty. System 2 cards are routed but never enter
+the listen queue.
 
 > The older single-step `pipelines/weekly` still exists but the two-phase flow above
 > supersedes it (adds the human review checkpoint).

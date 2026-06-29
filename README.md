@@ -84,13 +84,14 @@ cached so re-runs are nearly free.
 - **One-time sort** — rank the three existing reading lists by counterfactual impact
   and reorder them in place (with a per-card note explaining the rank). Safe by default:
   it shows a proposed order first and only reorders the board when told to apply.
-- **Ongoing intake (two phases)** — **Phase 1** triages the Inbox and moves reading
-  material to *To Be Processed* for your review; **Phase 2** (triggered when you drag
-  cards into *▶ Ready to Process*) routes + ranks them, tops up the queue, and publishes.
+- **Ongoing intake (two phases)** — **Phase 1** (LLM-free) moves every Inbox card with a
+  link into *To Be Processed* for your review (link-less todos stay in the Inbox); **Phase 2**
+  (the *Sort readables* button) routes + ranks whatever remains in *To Be Processed*, tops up
+  the queue, and publishes.
 
-Both run as scheduled jobs; every board-mutating step is dry-run by default and only
-acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`,
-`run_phase1.sh`, `run_phase2.sh`).
+Both run via the Trello buttons (Phase 2 in the Cloudflare container; `scripts/run_phase2_local.sh`
+is a local recovery escape hatch). Every board-mutating step is dry-run by default and only
+acts with `--apply`. See `reports/usage.md` for commands (`run_oneshot.sh`, `run_phase1.sh`).
 
 ## Architecture (deployed on Cloudflare, off the Mac)
 

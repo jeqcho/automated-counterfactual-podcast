@@ -189,11 +189,14 @@ run) → review → `--apply`.
   `trigger.chojeq.com` Cloudflare tunnel (ephemeral; for testing).
 - **Delivery:** podcast RSS on Cloudflare R2 (zero egress). "Private" = unlisted +
   unguessable UUID path prefix.
-- **Two-phase intake** (Inbox mixes reading links with todos): **Phase 1** (`triage.py`
-  + `pipelines/phase1.py`) classifies each Inbox card read-vs-do (cheap Haiku, title/URL
-  only) and moves only reading material → `To Be Processed` (todos stay in Inbox; title
-  only, no markers). Jay reviews `To Be Processed` and drags any wrong cards back to the
-  Inbox. **Phase 2** (`pipelines/phase2.py`) then drains `To Be Processed` (the SAME list —
+- **Two-phase intake** (Inbox mixes reading links with todos): **Phase 1**
+  (`pipelines/phase1.py`) is now **LLM-FREE (simplified 2026-06-28)** — it moves EVERY Inbox
+  card that has a link (`_has_link`: a URL in name/desc or on `card.url`) → `To Be Processed`,
+  and leaves link-less cards (pure todos/notes) in the Inbox. No read-vs-do classification, no
+  Haiku call. (Removed `triage.py`/`InboxTriager` — the old Haiku read-vs-do classifier; Jay's
+  manual review of `To Be Processed` catches anything he doesn't want to read, so the LLM step
+  wasn't worth the cost/latency.) Jay reviews `To Be Processed` and drags any wrong cards back
+  to the Inbox. **Phase 2** (`pipelines/phase2.py`) then drains `To Be Processed` (the SAME list —
   no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
   queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
 - **Trello buttons (Butler Premium):** two board buttons issue Butler HTTP-request POSTs to
