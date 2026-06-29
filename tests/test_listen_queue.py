@@ -96,3 +96,60 @@ async def test_skips_unsynthesizable_and_stops_when_pool_exhausted(monkeypatch):
 class _NoCache:
     def get_audio(self, card_id):
         return None
+
+
+async def test_synth_many_parallel_renders_misses_reuses_hits_skips_unreadable(
+        monkeypatch, tmp_path):
+    """synth.many: cache hits reused (no render), misses rendered (in parallel for
+    thread-safe engines), ok=False skipped -> None. Cache I/O stays on the main thread."""
+    from counterfactual_podcast import audio as audio_mod
+    from counterfactual_podcast.cache import Cache
+    from counterfactual_podcast.listen_queue import make_synth
+    from counterfactual_podcast.models import ExtractedContent
+
+    rendered = []
+
+    def fake_render(card_id, text, *, engine=None, out_dir=None, title="",
+                    author="", source="", date=""):
+        rendered.append(card_id)
+        return AudioAsset(card_id, f"/tmp/{card_id}.mp3", 100.0, "fakepar")
+
+    monkeypatch.setattr(audio_mod, "render_audio", fake_render)
+    monkeypatch.setattr(config, "PARALLEL_SAFE_TTS", frozenset({"fakepar"}))
+    monkeypatch.setattr(config, "SYNTH_CONCURRENCY", 4)
+
+    cache = Cache(":memory:")
+    for cid in ("a", "b", "c"):
+        cache.put_extracted(ExtractedContent(card_id=cid, title=cid, text="hi",
+                                             word_count=1, est_minutes=1, kind="text", ok=True))
+    # pre-cache audio for 'a' with an existing local file -> should be reused, not rendered
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x")
+    cache.put_audio(AudioAsset("a", str(f), 50.0, "fakepar"))
+
+    class FakeEngine:
+        name = "fakepar"
+
+    synth = make_synth(cache, engine=FakeEngine())
+    assert synth.concurrency == 4  # parallel-safe engine -> concurrent
+
+    def feats(cid, ok=True):
+        return CardFeatures(cid, cid, 1, "digest", "text", ok)
+
+    res = await synth.many([(feats("a"), None), (feats("b"), None),
+                            (feats("c", ok=False), None)])
+    assert res["a"].seconds == 50.0   # cache hit reused
+    assert res["b"].seconds == 100.0  # miss rendered
+    assert res["c"] is None           # ok=False skipped
+    assert rendered == ["b"]          # only the genuine miss was rendered
+
+
+async def test_synth_concurrency_is_one_for_unsafe_engine(monkeypatch):
+    from counterfactual_podcast.cache import Cache
+    from counterfactual_podcast.listen_queue import make_synth
+    monkeypatch.setattr(config, "PARALLEL_SAFE_TTS", frozenset({"google", "openai"}))
+
+    class Kokoro:
+        name = "kokoro"
+    synth = make_synth(Cache(":memory:"), engine=Kokoro())
+    assert synth.concurrency == 1  # espeak not thread-safe -> sequential

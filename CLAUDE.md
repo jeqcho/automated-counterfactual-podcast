@@ -285,9 +285,19 @@ run) → review → `--apply`.
     into **129 CoreML partitions** (only 1023 of 2256 nodes supported), so CPU↔ANE handoff
     overhead dominates. (Set via `ONNX_PROVIDER` env / `KOKORO_ONNX_PROVIDER` config knob,
     left as an escape hatch but default empty = CPU.)
-  - **Parallel chunk synthesis is BROKEN** — Kokoro's espeak phonemizer has global state
-    and is NOT thread-safe; concurrent `model.create()` corrupts it (`RuntimeError: number
-    of lines in input and output must be equal`). Keep synth sequential per process.
+  - **Parallel chunk synthesis is BROKEN for KOKORO** — its espeak phonemizer has global
+    state and is NOT thread-safe; concurrent `model.create()` corrupts it (`RuntimeError:
+    number of lines in input and output must be equal`). Kokoro must stay sequential.
+  - **CARD-level synth IS parallelized for Google/OpenAI (2026-06-28).** Those are API-bound,
+    not subject to espeak's constraint, so the queue build now renders a priority window of
+    episodes concurrently — `listen_queue.make_synth` exposes `synth.many()` (concurrency =
+    `config.SYNTH_CONCURRENCY`=8 for engines in `config.PARALLEL_SAFE_TTS={google,openai}`,
+    else 1 = Kokoro stays serial). Thread-safety rule: the pure render (`audio.render_audio`)
+    runs in `asyncio.to_thread`; ALL SQLite cache I/O (`cached_audio` read, `cache.put_audio`
+    write) stays on the main thread — the cache connection is `check_same_thread`-bound, so a
+    cache write from a worker thread raises. The window is bounded by est reading-time
+    (`need*1.25`) so we don't synth far past the 20h target (audio runs longer than reading
+    time, so an est-sized window over-covers). Big speedup on the slow sequential synth phase.
   - The earlier "synth was crawling" was NOT the provider — it was (1) comment-bloated
     extractions (one SSC post = 551k chars = ~51h of audio of comments) and (2) over-small
     chunks. Both fixed (see comment-stripping below + chunk 350→400). No engine change needed.
@@ -362,6 +372,20 @@ run) → review → `--apply`.
   `google_engine.byte_safe_chunks()` hard-splits any chunk over 4800 UTF-8 bytes (mirrors
   Kokoro's `_synth_chunk_safe`). Also `listen_queue` now wraps per-card synth in try/except so
   one bad card skips instead of crashing the run.
+- **⚠️⚠️ THE BUTTON RUNS WHATEVER IMAGE IS DEPLOYED — NOT YOUR LOCAL CODE. REDEPLOY AFTER
+  CODE CHANGES (2026-06-28).** A whole evening's debugging traced back to this: the live
+  container image was deployed **2026-06-14**, but the workflow-simplification code (Phase 2
+  reads "To Be Processed", not the removed "▶ Ready to Process") landed **2026-06-20**. So
+  pressing the button ran 2-week-stale code that looked for "▶ Ready to Process", found 0
+  cards, and no-op'd — silently doing nothing while looking healthy. Symptom to recognize
+  INSTANTLY: `/logs` shows behavior that contradicts the current source (e.g. a list name the
+  code no longer uses, a code path you deleted). **Before triggering ANY cloud run after a
+  commit, redeploy** (`npx wrangler deploy`, Docker running) OR verify the live image matches:
+  `wrangler containers info <app-id>` → compare the image tag/digest to the one your last
+  `wrangler deploy` pushed (the deploy log's `EDIT ... image:` line). The container image is
+  built from `src/` AT DEPLOY TIME and is otherwise frozen — git push does NOT update the cloud.
+  (Companion gotcha: a live `max_instances:1` instance can refuse the new image; bump the
+  Dockerfile `CF_BUILD_MARKER` to force a fresh digest — see the deploy-rollout note above.)
 - **First Phase-2 run is SLOW (~40 min) and uncached:** the queue does a combined
   System1+LifeOptim ranking needing **cross-list** comparisons never computed by the per-list
   sorts. Merge-sort comparisons are **sequential** (~1.3/s), so concurrency-50 doesn't help.

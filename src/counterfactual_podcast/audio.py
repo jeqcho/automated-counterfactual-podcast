@@ -110,16 +110,47 @@ def synthesize_card(
         return None
 
     # Resume: reuse cached audio if its MP3 is still present locally or in R2.
-    if cache is not None:
-        cached = cache.get_audio(card_id)
-        if cached is not None:
-            if cached.path and Path(cached.path).exists():
-                log.debug("audio cache hit (local) for card %s -> %s", card_id, cached.path)
-                return cached
-            if r2_check is not None and r2_check(card_id):
-                log.debug("audio cache hit (R2) for card %s", card_id)
-                return cached
+    hit = cached_audio(card_id, cache, r2_check=r2_check)
+    if hit is not None:
+        return hit
 
+    asset = render_audio(card_id, text, engine=engine, out_dir=out_dir,
+                         title=title, author=author, source=source, date=date)
+
+    if cache is not None:
+        cache.put_audio(asset)
+    return asset
+
+
+def cached_audio(card_id: str, cache: Cache | None, *, r2_check=None) -> AudioAsset | None:
+    """Return a reusable cached AudioAsset (its MP3 still exists locally or in R2), else None.
+
+    This is a CACHE READ — keep it on the main thread (the SQLite connection is bound to its
+    creating thread). Split out of :func:`synthesize_card` so the parallel queue builder can do
+    hit-checks on the main thread before farming the misses out to a render thread pool.
+    """
+    if cache is None:
+        return None
+    cached = cache.get_audio(card_id)
+    if cached is None:
+        return None
+    if cached.path and Path(cached.path).exists():
+        log.debug("audio cache hit (local) for card %s -> %s", card_id, cached.path)
+        return cached
+    if r2_check is not None and r2_check(card_id):
+        log.debug("audio cache hit (R2) for card %s", card_id)
+        return cached
+    return None
+
+
+def render_audio(card_id: str, text: str, *, engine=None,
+                 out_dir: Path = config.OUTPUTS / "audio",
+                 title: str = "", author: str = "", source: str = "",
+                 date: str = "") -> AudioAsset:
+    """PURE synthesis: text -> MP3 file -> AudioAsset. Does NO cache I/O, so it is safe to run
+    in a thread pool for thread-safe engines (Google/OpenAI). Each card writes a distinct
+    ``{card_id}.mp3``, so concurrent renders don't collide. (Kokoro must NOT be run concurrently
+    — its espeak phonemizer has global state; gate parallelism on config.PARALLEL_SAFE_TTS.)"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{card_id}.mp3"
@@ -141,9 +172,5 @@ def synthesize_card(
         seconds=seconds,
         engine=getattr(engine, "name", ""),
     )
-
-    if cache is not None:
-        cache.put_audio(asset)
-
     log.info("synthesized card %s -> %s (%.1fs)", card_id, out_path, seconds)
     return asset

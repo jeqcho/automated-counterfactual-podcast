@@ -92,6 +92,13 @@ GOOGLE_TTS_LANGUAGE = os.environ.get("GOOGLE_TTS_LANGUAGE", "en-US")
 # Speak the episode title at the start of each audio so it's clear where one article
 # ends and the next begins (set SPEAK_TITLE_INTRO=0 to disable).
 SPEAK_TITLE_INTRO = os.environ.get("SPEAK_TITLE_INTRO", "1") not in ("0", "false", "False", "")
+# Queue audio synthesis concurrency. Kokoro's espeak phonemizer has non-thread-safe global
+# state (concurrent synth corrupts it), so it MUST stay sequential. Google/OpenAI TTS are
+# API-bound (no such constraint) and can synth many episodes in parallel — big speedup on the
+# queue build. Only engines in PARALLEL_SAFE_TTS use SYNTH_CONCURRENCY; others run at 1.
+SYNTH_CONCURRENCY = int(os.environ.get("SYNTH_CONCURRENCY", "8"))
+PARALLEL_SAFE_TTS = frozenset(
+    s.strip() for s in os.environ.get("PARALLEL_SAFE_TTS", "google,openai").split(",") if s.strip())
 # NB: no per-card text cap — we synthesize the FULL article (one article = one episode).
 # Comment sections are stripped at extraction (extract.py) so length stays sane; speed
 # comes from a fast TTS provider, not from truncating content.
