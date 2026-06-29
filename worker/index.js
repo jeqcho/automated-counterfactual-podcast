@@ -35,6 +35,8 @@ const FORWARD_ENV = [
   "TTS_ENGINE",
   "GOOGLE_APPLICATION_CREDENTIALS",
   "GOOGLE_CREDENTIALS_JSON",
+  "MAX_FETCH_CONCURRENCY",
+  "MAX_LLM_CONCURRENCY",
 ];
 
 export class PodcastContainer extends Container {

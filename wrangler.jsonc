@@ -48,7 +48,13 @@
   // privacy-sensitive (unguessable feed path) so it's a SECRET, not committed here.
   "vars": {
     "TTS_ENGINE": "google",
-    "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp-sa.json"
+    "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/gcp-sa.json",
+    // standard-1 is 0.5 vCPU / 4 GB. The default 50-wide fetch/LLM concurrency can spike
+    // RAM/CPU past that on a cold UNCACHED list and get the container OOM/health-reaped
+    // mid-run (see CLAUDE.md "container gets killed mid-run"). Cap it low on the cloud;
+    // the Mac keeps the default 50 (it has the resources).
+    "MAX_FETCH_CONCURRENCY": "8",
+    "MAX_LLM_CONCURRENCY": "8"
   },
 
   // No cron triggers — both phases are invoked on demand via the Trello Butler buttons

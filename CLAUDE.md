@@ -434,15 +434,21 @@ run) → review → `--apply`.
   - **Why a cached list is fine:** Life Optim (47 cached) and System 1 (257 cached) routed with
     no stall — `aenrich_many` is all cache hits, near-zero CPU/RAM. Only the *uncached* bulk
     enrichment is lethal. So the danger is specifically: a big list whose digests aren't in R2 yet.
-  - **Fixes (in rough priority):** (1) **Warm the cache off-Mac first** — run the enrichment/
-    full Phase 2 LOCALLY (full RAM/CPU, can't be reaped), then it pushes the warm cache to R2 and
-    the cloud button stays light forever after. This is the escape hatch we used. (2) **Lower
-    cloud concurrency** — set `MAX_FETCH_CONCURRENCY`/`MAX_LLM_CONCURRENCY` to ~8-12 via wrangler
-    vars so a cold list can't spike RAM/CPU. (3) **Checkpoint the cache mid-run** (periodic
-    `push_cache_to_r2`) so a kill doesn't lose everything → re-press resumes. (4) **Bigger
-    `instance_type`** (standard-2/4) raises the ceiling but doesn't fix the 0.5-vCPU health
-    starvation if that's the trigger. (5) **Hoist `get_cards`/`aenrich_many(existing)` out of the
-    per-card loop** (enrich once up front, 50-wide, then route) — also removes the repeated work.
+  - **✅ FIXED (2026-06-29) — two fixes shipped + deployed so the button survives a cold batch:**
+    (a) **Lowered cloud concurrency** — `MAX_FETCH_CONCURRENCY`/`MAX_LLM_CONCURRENCY` = **8** via
+    wrangler `vars` (+ added to the `worker/index.js` FORWARD_ENV whitelist, else the container
+    never sees them); the Mac keeps the default 50. (b) **Cache is now CHECKPOINTED to R2 every
+    10 routed cards** mid-`run_phase2` (`checkpoint=push_cache_to_r2` wired in `phase2._build_and_run`,
+    guarded by `config.R2_BUCKET` so local CLI runs that lack R2 don't try; the push runs in
+    `asyncio.to_thread` to keep `/health` responsive). So a kill now loses ≤10 cards of work
+    instead of everything, AND re-press RESUMES (moved cards are gone from 'To Be Processed';
+    their digests + pairwise comps are in R2) → the run CONVERGES across presses instead of
+    looping forever. **Still recommended for a huge cold batch:** warm off-Mac first
+    (`scripts/run_phase2_local.sh` — full RAM/CPU, can't be reaped, pushes warm cache to R2)
+    so the cloud button is light/fast. Not-yet-done (lower priority): (4) bigger `instance_type`,
+    (5) hoist `aenrich_many(existing)` out of the per-card loop (it re-enriches the whole dest
+    list every iteration — cheap when warm, but redundant). The recurring trigger is always the
+    same: a list whose digests aren't in R2 yet.
 - **Phases are MUTUALLY EXCLUSIVE — the trigger refuses to start one while the other runs
   (2026-06-28).** Both phases pull the same R2 `state/cache.sqlite3` into the same local path
   at start and push it back at finish, so running them concurrently races on that file (SQLite

@@ -19,13 +19,15 @@ from .weekly import _insertion_pos  # shared fractional-position helper
 
 
 async def run_phase2(client, cache, enricher, classifier, comparator,
-                     ensure_queue_fn, publish_fn, *, apply: bool = False, log=None) -> dict:
+                     ensure_queue_fn, publish_fn, *, apply: bool = False, log=None,
+                     checkpoint=None, checkpoint_every: int = 10) -> dict:
     trigger_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
     cards = client.get_cards(trigger_id)
     if log:
         log.info(f"'To Be Processed' has {len(cards)} cards")
 
     routed = []
+    done = 0  # cards actually routed (apply); used to checkpoint the cache every N cards
     for card in cards:
         feats = await enricher.aenrich(card)
         label = (await classifier.aclassify(feats)).get("label", "system1")
@@ -43,6 +45,19 @@ async def run_phase2(client, cache, enricher, classifier, comparator,
         routed.append({"card_id": card.id, "label": label, "rank": rank})
         if log:
             log.info(f"  {card.name[:50]} -> {label}" + (f" @#{rank}" if rank else ""))
+
+        # Persist the cache mid-run so a container kill doesn't lose all the expensive
+        # extraction/digest/pairwise work — without this, a kill on a big UNCACHED batch
+        # leaves R2 untouched and every re-press redoes the same cards and dies again (the
+        # documented infinite re-press loop). With it, a re-press resumes near where it died.
+        if apply and checkpoint is not None:
+            done += 1
+            if done % checkpoint_every == 0:
+                if log:
+                    log.info(f"  [checkpoint] persisting cache after {done} cards")
+                maybe = checkpoint()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
 
     queue = await ensure_queue_fn() if apply else {"skipped": "dry-run"}
     feed = publish_fn() if apply else {"skipped": "dry-run"}
@@ -72,8 +87,19 @@ async def _build_and_run(apply: bool, log=None) -> dict:
     def publish_fn():
         return publish(episodes_for_queue(client, cache), upload=bool(config.R2_BUCKET))
 
+    # Checkpoint the SQLite cache to R2 every N routed cards (only when R2 is configured —
+    # i.e. on the cloud, where the container can be killed mid-run). push_cache_to_r2 is a
+    # blocking boto3 upload, so run it off the loop to keep /health responsive during the push.
+    checkpoint = None
+    if config.R2_BUCKET:
+        from ..cache import push_cache_to_r2
+
+        async def checkpoint():
+            await asyncio.to_thread(push_cache_to_r2)
+
     return await run_phase2(client, cache, enricher, classifier, comparator,
-                            ensure_queue_fn, publish_fn, apply=apply, log=log)
+                            ensure_queue_fn, publish_fn, apply=apply, log=log,
+                            checkpoint=checkpoint)
 
 
 def main() -> None:

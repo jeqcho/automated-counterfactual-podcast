@@ -78,6 +78,42 @@ async def test_phase2_routes_drains_and_publishes():
     assert calls["q"] == 1 and calls["p"] == 1
 
 
+async def test_phase2_checkpoints_cache_periodically():
+    # 5 routed cards, checkpoint_every=2 -> checkpoint fires after cards 2 and 4 (2 times).
+    # Persisting mid-run means a container kill loses at most `checkpoint_every` cards of work
+    # instead of the whole run (breaks the re-press-forever loop).
+    trigger = [Card(f"t{i}", f"t{i}") for i in range(1, 6)]
+    feats = {f"t{i}": CardFeatures(f"t{i}", f"p{i}", 5, "d", "html", True) for i in range(1, 6)}
+    feats["e1"] = CardFeatures("e1", "p9", 20, "existing", "html", True)
+    existing = {config.SYSTEM1_LIST_ID: [Card("e1", "e1")]}
+    labels = {f"t{i}": "system1" for i in range(1, 6)}
+    client = FakeClient(trigger, existing)
+    ckpts = {"n": 0}
+
+    res = await run_phase2(client, None, FakeEnricher(feats), FakeClassifier(labels),
+                           FakeComparator(), _noop, lambda: {}, apply=True,
+                           checkpoint=lambda: ckpts.__setitem__("n", ckpts["n"] + 1),
+                           checkpoint_every=2)
+    assert res["processed"] == 5
+    assert ckpts["n"] == 2          # after card 2 and card 4; the 5th is covered by the end push
+
+
+async def test_phase2_no_checkpoint_when_dry_run():
+    trigger = [Card("t1", "t1")]
+    feats = {"t1": CardFeatures("t1", "p1", 5, "d", "html", True)}
+    client = FakeClient(trigger, {})
+    ckpts = {"n": 0}
+    await run_phase2(client, None, FakeEnricher(feats), FakeClassifier({"t1": "system1"}),
+                     FakeComparator(), _noop, lambda: {}, apply=False,
+                     checkpoint=lambda: ckpts.__setitem__("n", ckpts["n"] + 1),
+                     checkpoint_every=1)
+    assert ckpts["n"] == 0          # dry run mutates nothing, so nothing to checkpoint
+
+
+async def _noop():
+    return {}
+
+
 async def test_phase2_empty_trigger_is_noop_route():
     client = FakeClient([], {})
 
