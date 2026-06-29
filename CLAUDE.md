@@ -449,6 +449,22 @@ run) → review → `--apply`.
     (5) hoist `aenrich_many(existing)` out of the per-card loop (it re-enriches the whole dest
     list every iteration — cheap when warm, but redundant). The recurring trigger is always the
     same: a list whose digests aren't in R2 yet.
+- **⚠️ THE DEADLOCK ROOT CAUSE (2026-06-29) — the Trello client had NO request timeout, which
+  froze the whole async event loop.** Symptom: a run sits at **0% CPU, log frozen for many
+  minutes**, and — the tell — even the 90s Anthropic timeout never fires. Root cause: `requests`
+  blocks FOREVER on a hung/silently-dropped TCP connection, and the pipeline calls Trello
+  **synchronously inside** the async loop (`run_phase2`/`ensure_listen_queue` call
+  `get_cards`/`move_card`/`set_rank_marker` directly), so one stuck request wedges the entire
+  asyncio loop — no timer (incl. the Anthropic read timeout) can fire. **This explains BOTH the
+  routing stall (this date) AND last session's queue-merge deadlock** (previously written off as
+  un-diagnosable). Fixed: `trello._REQUEST_TIMEOUT = (10, 30)` on every `_session.request`, and
+  `requests.Timeout`/`ConnectionError` retry with the existing backoff. (extract.py already had
+  20/60/30s fetch timeouts — only the Trello client was missing one.) Diagnostic recipe: find the
+  real worker PID (`ps -axo pid,time,command | grep '[.]venv/bin/python3 -m counterfactual'` — NOT
+  the `uv run` wrapper), sample its cputime over 3s (flat = blocked on IO, not computing), and a
+  log frozen >3 min ≈ a hang, not a slow card. NB: a single card legitimately taking ~4 min (many
+  Opus escalations) can trip a 3-min stall alarm yet self-recover — confirm by re-checking whether
+  `routed=` advanced before killing.
 - **Phases are MUTUALLY EXCLUSIVE — the trigger refuses to start one while the other runs
   (2026-06-28).** Both phases pull the same R2 `state/cache.sqlite3` into the same local path
   at start and push it back at finish, so running them concurrently races on that file (SQLite
