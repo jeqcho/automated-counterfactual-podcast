@@ -195,8 +195,14 @@ run) → review → `--apply`.
   and leaves link-less cards (pure todos/notes) in the Inbox. No read-vs-do classification, no
   Haiku call. (Removed `triage.py`/`InboxTriager` — the old Haiku read-vs-do classifier; Jay's
   manual review of `To Be Processed` catches anything he doesn't want to read, so the LLM step
-  wasn't worth the cost/latency.) Jay reviews `To Be Processed` and drags any wrong cards back
-  to the Inbox. **Phase 2** (`pipelines/phase2.py`) then drains `To Be Processed` (the SAME list —
+  wasn't worth the cost/latency.) **After moving, Phase 1 DEDUPS `To Be Processed`** (`dedup.py`,
+  added 2026-06-28): it archives any card whose URL already appears earlier in the list OR
+  elsewhere on the board (System1/2, Life Optim, Listen Queue), so the same article never fans
+  out into the reading lists twice (previously a manual cleanup). Conservative URL key — strips
+  www/trailing-slash/`utm_*`/`fbclid`/etc. but KEEPS meaningful query, so `youtube.com/watch?v=A`
+  ≠ `?v=B` and distinct newsletter links aren't wrongly merged. Jay reviews `To Be Processed`
+  and drags any wrong cards back to the Inbox. **Phase 2** (`pipelines/phase2.py`) then drains
+  `To Be Processed` (the SAME list —
   no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
   queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
 - **Trello buttons (Butler Premium):** two board buttons issue Butler HTTP-request POSTs to
