@@ -220,22 +220,42 @@ run) → review → `--apply`.
 - Target lists: System 1 (lighter, "doesn't require system 2") =
   `683cb9f4387706ad70dc4299` (301 cards); System 2 (deep) =
   `683cb9e94b55936c9e9505a3` (272); Life Optimization = `69cffff85c64bd09a7c8cd7d` (50).
-- **Trello Inbox (UPDATED 2026-06-28 — the Inbox board is now auth-locked + flaky):** do NOT
-  call `/members/me/inbox` (401). Resolve via `GET /1/members/me?fields=inbox` →
-  `inbox.idList` + `inbox.idBoard` (dynamic; don't hardcode the account-specific id). But you
-  can NO LONGER "treat idList as a normal list" — `GET /1/lists/{inbox_idList}/cards` returns
-  **401 unauthorized**. Read the Inbox via the BOARD endpoint instead:
-  `GET /1/boards/{inbox_idBoard}/cards` filtered to `idList == inbox_idList`
-  (`TrelloClient.get_inbox_cards`). And that board endpoint — plus moving a card OUT of the
-  Inbox (`PUT /1/cards/{id}` with `idBoard`) — **intermittently 401s ~half the time** (flaky
-  Trello auth/throttle on the Inbox board), so both paths use **retry-on-401**: `_request(...,
-  _retry_codes=(401,), _max_tries=10)` and `move_card(retry_unauthorized=True)`. Phase 1 also
-  wraps each move in try/except so one stubborn card is skipped, not the whole batch. WRITING
-  INTO the Inbox is still impossible (move-in + create-in both hard-401 — see the "can't put
-  cards back in the Inbox" finding).
+- **⚠️ Trello Inbox is now SESSION-COOKIE-ONLY (UPDATED 2026-07-12 — API tokens are fully
+  locked out).** The Inbox lockdown that was "flaky ~50% 401" on 2026-06-28 hardened into a
+  **100% hard block for API tokens** by 2026-07-12: `GET /1/lists/{inbox}/cards`,
+  `/boards/{inbox_board}/cards`, and `/members/me/inbox` ALL return `401 "unauthorized member
+  permission requested"` — even after re-authorizing the token WITH `account`/Member scope. It
+  is NOT a scope gap; Trello architecturally excludes the personal Inbox from API tokens (only
+  the logged-in web/mobile session can touch it; Inbox has no public REST endpoint and no Butler
+  automation). **The working path is a logged-in web SESSION COOKIE**, which talks to
+  `https://trello.com/1` (NOT `api.trello.com`):
+  - **Read:** `GET trello.com/1/lists/{inboxList}/cards` with the `Cookie:` header.
+  - **Move out:** `PUT trello.com/1/cards/{id}` with the cookie + a **form body** `idBoard,
+    idList, dsc` — Trello's double-submit CSRF: the `dsc` value (itself one of the cookies) must
+    ALSO be posted in the body (query-param dsc → 403 "CSRF detected"; body dsc → 200).
+  - Implemented in `trello.py`: `TrelloClient(session_cookie=...)`, `has_session`,
+    `_web_request` (adds Origin/Referer/UA + dsc, raises `InboxAuthError` on 401/403),
+    `get_inbox_cards` (cookie read; inbox list id still resolved via the API token —
+    `members/me?fields=inbox` works), `move_inbox_card`. `config.TRELLO_SESSION_COOKIE` holds the
+    full cookie header; Phase 1 passes it in, uses `move_inbox_card`, and degrades gracefully
+    (logs a refresh prompt + still dedups) if the cookie is dead.
+  - **The cookie is `TRELLO_SESSION_COOKIE`** in `.env` (gitignored) + a Cloudflare secret (also
+    in `worker/index.js` FORWARD_ENV, else the container never sees it). It's the full `cookie:`
+    header from the Trello web app's DevTools → Network (any `trello.com/1/...` request). The
+    `cloud.session.token` JWT has a **~30-day `exp`** (a 10-min `refreshTimeout` field exists but
+    is NOT enforced — verified the cookie keeps working well past it). So **refresh ~monthly**:
+    grab a fresh cookie header, update `.env`, then `printf '%s' "$COOKIE" | npx wrangler secret
+    put TRELLO_SESSION_COOKIE`. When it expires, Phase 1 logs `INBOX UNAVAILABLE — refresh
+    TRELLO_SESSION_COOKIE` and moves nothing (but still dedups). Verified end-to-end on the cloud
+    2026-07-12: button 1 read 74 inbox cards, moved 15 links, dedup'd. **Security:** the session
+    cookie is a FULL-ACCOUNT credential (more powerful than the scoped API token) — never commit
+    it, never log it, compare by length/last-6 only.
+  - WRITING INTO the Inbox (move-in / create-in) is still not attempted — capture happens via
+    Trello's own integrations (mobile share, email-to-inbox, etc.); we only read + move OUT.
 - Listen queue tops up from **System 1 + Life Optim only** (System 2 excluded — needs
   focused reading). 20h is a **soft floor** (capped by extractable-content yield).
-- `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ANTHROPIC_API_KEY`,
+- `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_SESSION_COOKIE`
+  (the web session cookie for Inbox access — see the Inbox section), `ANTHROPIC_API_KEY`,
   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
   `R2_PUBLIC_BASE`.
 - Anthropic account = **highest tier** → concurrency 12 is safe.
