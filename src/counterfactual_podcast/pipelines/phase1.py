@@ -21,7 +21,8 @@ from ..trello import InboxAuthError
 # visible in Trello (not just a /logs line). Prefix lets us dedup it across repeated presses.
 _COOKIE_ALERT_PREFIX = "⚠️ Trello Inbox cookie expired"
 _COOKIE_ALERT = (_COOKIE_ALERT_PREFIX + " — 'Extract readables' can't read your Inbox. "
-                 "Refresh it: pbpaste | uv run python scripts/refresh_inbox_cookie.py")
+                 "Run 'uv run python scripts/refresh_inbox_cookie.py' — it walks you through "
+                 "copying a fresh cookie from Trello, then updates .env + the cloud secret.")
 
 
 def _has_link(card) -> bool:

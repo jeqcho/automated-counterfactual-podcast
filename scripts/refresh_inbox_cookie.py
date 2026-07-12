@@ -25,14 +25,33 @@ ROOT = Path(__file__).resolve().parent.parent
 ENV = ROOT / ".env"
 KEY = "TRELLO_SESSION_COOKIE"
 
+_STEPS = """
+──────────────────────────────────────────────────────────────────────────────
+ How to grab the Trello Inbox cookie:
+   1. Open  https://trello.com  in Chrome (make sure you're logged in).
+   2. Open DevTools:  Cmd+Option+I   →   click the  Network  tab.
+   3. In Trello, click your Inbox (or press Cmd+R to reload) so requests appear.
+   4. In the Network list, type  cards  in the filter box, then click any
+      request to  trello.com/1/...  (e.g.  cards?...).
+   5. Scroll to  Request Headers  →  find the  cookie:  line  →  copy its
+      ENTIRE value (it's long).
+   6. Paste it here and press Enter, then Ctrl-D.
+      (Shortcut once it's copied:  pbpaste | uv run python scripts/refresh_inbox_cookie.py)
+──────────────────────────────────────────────────────────────────────────────
+"""
+
 
 def main() -> None:
-    print("Paste the full Trello cookie header, then press Ctrl-D:", file=sys.stderr)
+    interactive = sys.stdin.isatty()  # True unless piped (e.g. `pbpaste | ...`)
+    if interactive:
+        # No pipe -> walk the user through grabbing the cookie, then wait for the paste.
+        print(_STEPS, file=sys.stderr)
     cookie = sys.stdin.read().strip()
-    if not cookie:
-        sys.exit("no cookie provided")
-    if "dsc=" not in cookie:
-        sys.exit("that doesn't look like a Trello cookie header (no `dsc=` found) — aborting")
+    if not cookie or "dsc=" not in cookie:
+        # Invalid/empty (or a stale clipboard via pbpaste) -> show the steps so they know how.
+        print(_STEPS, file=sys.stderr)
+        sys.exit("\n✗ That wasn't a valid Trello cookie header (no `dsc=` found). "
+                 "Follow the steps above, then run this again.")
     print(f"cookie: {len(cookie)} chars, last6 …{cookie[-6:]}", file=sys.stderr)
 
     # 1) Rewrite (or append) the line in .env, preserving everything else.
