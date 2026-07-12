@@ -37,6 +37,7 @@ const FORWARD_ENV = [
   "GOOGLE_CREDENTIALS_JSON",
   "MAX_FETCH_CONCURRENCY",
   "MAX_LLM_CONCURRENCY",
+  "TRELLO_SESSION_COOKIE",
 ];
 
 export class PodcastContainer extends Container {
