@@ -360,6 +360,11 @@ class TrelloClient:
         )
         return created["id"]
 
+    def create_card(self, list_id: str, name: str, pos="top") -> str:
+        """Create a card in ``list_id`` (API token — Home base lists only). Returns its id."""
+        created = self._request("POST", "/1/cards", idList=list_id, name=name, pos=pos)
+        return created["id"]
+
     def ensure_label(
         self, name: str, color: str, board_id: str = config.BOARD_ID
     ) -> str:

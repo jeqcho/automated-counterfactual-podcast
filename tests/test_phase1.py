@@ -23,6 +23,11 @@ class FakeClient:
         self.archived = getattr(self, "archived", [])
         self.archived.append(card_id)
 
+    def create_card(self, list_id, name, pos="top"):
+        self.created = getattr(self, "created", [])
+        self.created.append((list_id, name))
+        return "new"
+
     def move_inbox_card(self, card_id, to_list, to_board):
         self.moved.append((card_id, to_list))
 
@@ -84,3 +89,22 @@ async def test_phase1_expired_cookie_skips_move_still_dedups():
     assert res["moved_to_review"] == 0
     assert res["inbox_error"] and "refresh" in res["inbox_error"].lower()
     assert res["applied"] is True         # dedup pass still ran (no crash)
+    # a VISIBLE alert card was posted to the board so Jay notices
+    assert getattr(client, "created", []) and "cookie expired" in client.created[0][1].lower()
+
+
+async def test_phase1_alert_card_is_idempotent():
+    # If an alert card already exists on the board, don't post another every press.
+    from counterfactual_podcast.trello import InboxAuthError
+    from counterfactual_podcast.pipelines.phase1 import _COOKIE_ALERT_PREFIX
+
+    class DeadCookieWithAlert(FakeClient):
+        def get_inbox_cards(self):
+            raise InboxAuthError("session cookie rejected (401)")
+
+        def get_cards(self, list_id):
+            return [Card("old", _COOKIE_ALERT_PREFIX + " — already here")]
+
+    client = DeadCookieWithAlert([])
+    await run_phase1(client, apply=True)
+    assert getattr(client, "created", []) == []   # no duplicate alert

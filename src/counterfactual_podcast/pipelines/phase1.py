@@ -17,6 +17,13 @@ from ..extract import find_url
 from ..trello import InboxAuthError
 
 
+# Alert card posted to the board when the Inbox session cookie has expired, so the failure is
+# visible in Trello (not just a /logs line). Prefix lets us dedup it across repeated presses.
+_COOKIE_ALERT_PREFIX = "⚠️ Trello Inbox cookie expired"
+_COOKIE_ALERT = (_COOKIE_ALERT_PREFIX + " — 'Extract readables' can't read your Inbox. "
+                 "Refresh it: pbpaste | uv run python scripts/refresh_inbox_cookie.py")
+
+
 def _has_link(card) -> bool:
     """True if the card carries a URL — in the name/desc or on card.url from a Trello
     attachment. A card with a link is treated as reading material; no link => a todo."""
@@ -64,6 +71,19 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
 
     if log and failed:
         log.warning(f"{len(failed)} cards failed to move (left in Inbox), retry later")
+
+    # If the session cookie is dead, drop a VISIBLE alert card on the board so Jay notices
+    # (a /logs line he'd never check isn't enough). Idempotent — one alert, not one per press.
+    if inbox_error and apply:
+        try:
+            existing = {c.name for c in client.get_cards(dest)}
+            if not any(n.startswith(_COOKIE_ALERT_PREFIX) for n in existing):
+                client.create_card(dest, _COOKIE_ALERT, pos="top")
+                if log:
+                    log.error("posted a cookie-expired ALERT card to the board")
+        except Exception as e:  # noqa: BLE001 — alerting must never crash the run
+            if log:
+                log.warning(f"could not post alert card: {type(e).__name__}: {str(e)[:60]}")
 
     # Dedup 'To Be Processed' AFTER moving: archive any card whose URL already appears in the
     # reading lists / Listen Queue or earlier in the list, so the same article never fans out
