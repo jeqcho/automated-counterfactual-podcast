@@ -14,6 +14,7 @@ import asyncio
 
 from .. import config
 from ..extract import find_url
+from ..trello import InboxAuthError
 
 
 def _has_link(card) -> bool:
@@ -24,12 +25,20 @@ def _has_link(card) -> bool:
 
 async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
     dest = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
-    # The Inbox 401s on /lists/{id}/cards; get_inbox_cards reads it via the board endpoint.
-    cards = client.get_inbox_cards()
+    # The native Inbox is reachable ONLY via the session cookie (API tokens hard-401 it).
+    # If the cookie is missing/expired, surface it clearly but still dedup 'To Be Processed'.
+    inbox_error = None
+    try:
+        cards = client.get_inbox_cards()
+    except InboxAuthError as e:
+        inbox_error = str(e)
+        cards = []
+        if log:
+            log.error(f"INBOX UNAVAILABLE — {e}. Skipping Inbox move; running dedup only.")
 
     linked = [c for c in cards if _has_link(c)]
     no_link = [c for c in cards if not _has_link(c)]
-    if log:
+    if log and not inbox_error:
         log.info(f"inbox {len(cards)} cards: moving {len(linked)} with links -> "
                  f"'{config.TO_BE_PROCESSED_LIST_NAME}', keeping {len(no_link)} link-less in inbox")
 
@@ -37,10 +46,13 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
     for card in linked:
         if apply:
             try:
-                # cross-board move: native Inbox (hidden board) -> Home base list.
-                # retry_unauthorized: the Inbox board intermittently 401s.
-                client.move_card(card.id, dest, pos="bottom", board_id=config.BOARD_ID,
-                                 retry_unauthorized=True)
+                # cross-board move: native Inbox (hidden board) -> Home base list, via cookie.
+                client.move_inbox_card(card.id, dest, config.BOARD_ID)
+            except InboxAuthError as e:  # cookie died mid-run — no point continuing moves
+                inbox_error = str(e)
+                if log:
+                    log.error(f"session cookie expired mid-run ({e}); stopping moves")
+                break
             except Exception as e:  # noqa: BLE001 — one stubborn card must not abort the batch
                 failed.append({"card_id": card.id, "name": card.name})
                 if log:
@@ -65,12 +77,13 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
     return {"inbox": len(cards), "with_links": len(linked), "no_link_kept": len(no_link),
             "moved_to_review": len(moved), "failed": len(failed),
             "deduped": dedup["archived"], "moved": moved, "failed_cards": failed,
-            "dedup": dedup, "applied": apply}
+            "dedup": dedup, "inbox_error": inbox_error, "applied": apply}
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:
     from ..trello import TrelloClient
-    client = TrelloClient(config.TRELLO_KEY, config.TRELLO_TOKEN)
+    client = TrelloClient(config.TRELLO_KEY, config.TRELLO_TOKEN,
+                          session_cookie=config.TRELLO_SESSION_COOKIE)
     return await run_phase1(client, apply=apply, log=log)
 
 

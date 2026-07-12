@@ -36,18 +36,99 @@ _DEFAULT_RETRY_AFTER = 1.0
 # and the run deadlocks at 0% CPU. A timeout turns that into a retryable error instead.
 _REQUEST_TIMEOUT = (10, 30)
 
+# --- native-Inbox access via a logged-in web SESSION COOKIE ------------------------------
+# Trello's API tokens CANNOT read/write the native Inbox at all (hard 401, any scope —
+# confirmed 2026-07-12). The only path is the logged-in web app's session cookie, which talks
+# to trello.com/1 (NOT api.trello.com). Writes use Trello's double-submit CSRF: the `dsc`
+# value (itself one of the cookies) must ALSO be posted in the form body.
+_WEB_BASE = "https://trello.com/1"
+_WEB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Origin": "https://trello.com",
+    "Referer": "https://trello.com/",
+}
+
+
+class InboxAuthError(RuntimeError):
+    """The Trello session cookie is missing or expired, so the native Inbox can't be read or
+    written. Recover by refreshing ``TRELLO_SESSION_COOKIE`` — copy a fresh ``cookie:`` header
+    from the Trello web app's DevTools (Network tab) into ``.env`` and the cloud secret."""
+
 # Idempotent ranking marker placed at the TOP of a card description.
 _MARKER_RE = re.compile(r"<!--cf-->.*?<!--/cf-->\s*", re.DOTALL)
 
 
 class TrelloClient:
-    def __init__(self, key: str, token: str, *, sleep=time.sleep):
+    def __init__(self, key: str, token: str, *, sleep=time.sleep, session_cookie: str = ""):
         self.key = key
         self.token = token
         self._sleep = sleep
         self._session = requests.Session()
         # Timestamps of recent calls for the token-bucket limiter.
         self._calls: deque[float] = deque()
+        # Optional logged-in web session cookie (only path to the native Inbox).
+        self._session_cookie = (session_cookie or "").strip()
+        self._dsc = self._parse_dsc(self._session_cookie)
+
+    @staticmethod
+    def _parse_dsc(cookie: str) -> str:
+        """Extract the ``dsc`` CSRF token from a cookie header string ('' if absent)."""
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("dsc="):
+                return part[4:]
+        return ""
+
+    @property
+    def has_session(self) -> bool:
+        """True if a usable session cookie (with a dsc token) is configured."""
+        return bool(self._session_cookie and self._dsc)
+
+    def _web_request(self, method: str, path: str, *, params=None, data=None):
+        """Session-cookie request to ``trello.com/1`` — the only auth that can touch the
+        native Inbox. Injects the ``dsc`` token into write bodies. Raises
+        :class:`InboxAuthError` on 401/403 (missing/expired cookie); retries network errors
+        and 429 with backoff, mirroring :meth:`_request`."""
+        if not self.has_session:
+            raise InboxAuthError("no Trello session cookie configured (TRELLO_SESSION_COOKIE)")
+        headers = dict(_WEB_HEADERS)
+        headers["Cookie"] = self._session_cookie
+        body = None
+        if method != "GET":
+            body = dict(data or {})
+            body["dsc"] = self._dsc  # double-submit CSRF: dsc in cookie AND body
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        url = f"{_WEB_BASE}{path}"
+        delay = _DEFAULT_RETRY_AFTER
+        for attempt in range(_MAX_TRIES):
+            self._throttle()
+            try:
+                resp = self._session.request(method, url, params=params, data=body,
+                                             headers=headers, timeout=_REQUEST_TIMEOUT)
+            except (requests.Timeout, requests.ConnectionError):
+                if attempt < _MAX_TRIES - 1:
+                    self._sleep(delay)
+                    delay = min(delay * 2, 8.0)
+                    continue
+                raise
+            if resp.status_code in (401, 403):
+                raise InboxAuthError(
+                    f"Trello session cookie rejected ({resp.status_code}) — refresh "
+                    f"TRELLO_SESSION_COOKIE (grab a fresh cookie header from Trello DevTools)")
+            if resp.status_code == 429:
+                ra = resp.headers.get("Retry-After")
+                try:
+                    wait = float(ra) if ra is not None else delay
+                except (TypeError, ValueError):
+                    wait = delay
+                self._sleep(wait)
+                delay = min(delay * 2, 8.0)
+                continue
+            resp.raise_for_status()
+            return resp.json() if resp.content else None
+        resp.raise_for_status()
+        return None
 
     # -- core ---------------------------------------------------------------
     def _throttle(self) -> None:
@@ -150,26 +231,28 @@ class TrelloClient:
         return data["inbox"]["idList"]
 
     def get_inbox_cards(self) -> list[Card]:
-        """Read the native Trello Inbox's cards.
+        """Read the native Trello Inbox's cards via the SESSION COOKIE.
 
-        The Inbox lives on a hidden board whose ``/1/lists/{id}/cards`` endpoint returns
-        **401 unauthorized** (Trello locks the Inbox down), so the normal ``get_cards`` path
-        fails on it. The BOARD endpoint ``/1/boards/{idBoard}/cards`` DOES work — read the
-        inbox board's cards and keep only those in the inbox list. Returns ``[]`` if the
-        inbox can't be resolved. (Discovered 2026-06-28 when Phase 1 started 401ing.)
+        API tokens CANNOT read the Inbox — every endpoint (list, board, member) hard-401s
+        regardless of scope (confirmed 2026-07-12; Trello fully locked the Inbox to logged-in
+        web/mobile sessions). So we read it with ``TRELLO_SESSION_COOKIE`` against
+        ``trello.com/1``. The inbox list id is resolved with the API token (that part still
+        works). Raises :class:`InboxAuthError` if the cookie is missing/expired.
         """
-        me = self._request("GET", "/1/members/me", fields="inbox") or {}
-        inbox = me.get("inbox") or {}
-        list_id, board_id = inbox.get("idList"), inbox.get("idBoard")
-        if not (list_id and board_id):
-            return []
-        data = self._request(
-            "GET", f"/1/boards/{board_id}/cards",
-            _retry_codes=(401,), _max_tries=10,
-            fields="name,desc,pos,idList", attachments="true", attachment_fields="url",
+        list_id = self.inbox_list_id()  # API-token resolution (members/me?fields=inbox — OK)
+        data = self._web_request(
+            "GET", f"/lists/{list_id}/cards",
+            params={"fields": "name,desc,pos", "attachments": "true",
+                    "attachment_fields": "url"},
         )
-        return [self._row_to_card(c, list_id) for c in data or []
-                if c.get("idList") == list_id]
+        return [self._row_to_card(c, list_id) for c in data or []]
+
+    def move_inbox_card(self, card_id: str, to_list: str, to_board: str):
+        """Move a card OUT of the native Inbox (into a Home base list) via the session cookie.
+        A cross-board move needs both ``idBoard`` and ``idList``; the cookie path adds the
+        ``dsc`` CSRF token. Raises :class:`InboxAuthError` if the cookie is missing/expired."""
+        return self._web_request("PUT", f"/cards/{card_id}",
+                                 data={"idBoard": to_board, "idList": to_list})
 
     # -- card mutations -----------------------------------------------------
     def set_card_position(self, card_id: str, pos):

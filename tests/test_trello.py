@@ -224,3 +224,73 @@ def test_request_raises_after_timeout_retries_exhausted():
     c = _client()
     with pytest.raises(requests.ConnectionError):
         c._request("GET", "/1/x")
+
+
+# --- session-cookie native-Inbox path ----------------------------------------------------
+_COOKIE = "cloud.session.token=abc; dsc=DSC123; other=x"
+
+
+def _session_client():
+    return TrelloClient("KEY", "TOKEN", sleep=lambda *_: None, session_cookie=_COOKIE)
+
+
+def test_parse_dsc_and_has_session():
+    c = _session_client()
+    assert c.has_session is True
+    assert c._dsc == "DSC123"
+    # No cookie / no dsc -> not usable
+    assert TrelloClient("K", "T", session_cookie="").has_session is False
+    assert TrelloClient("K", "T", session_cookie="foo=bar").has_session is False
+
+
+@responses.activate
+def test_get_inbox_cards_uses_session_cookie():
+    from counterfactual_podcast.trello import API_BASE as _AB  # token resolves inbox list id
+    responses.add(responses.GET, f"{_AB}/1/members/me",
+                  json={"inbox": {"idList": "INBOX", "idBoard": "IB"}}, status=200)
+    # cards come from trello.com/1 (web base) with the cookie
+    responses.add(responses.GET, "https://trello.com/1/lists/INBOX/cards",
+                  json=[{"id": "c1", "name": "https://x.org/a", "pos": 1}], status=200)
+    c = _session_client()
+    cards = c.get_inbox_cards()
+    assert [x.id for x in cards] == ["c1"]
+    # the web request carried the cookie header
+    web_call = [call for call in responses.calls if "trello.com/1/lists" in call.request.url][0]
+    assert "dsc=DSC123" in web_call.request.headers["Cookie"]
+
+
+@responses.activate
+def test_move_inbox_card_posts_dsc_in_body():
+    captured = {}
+
+    def cb(request):
+        captured["body"] = request.body
+        captured["ct"] = request.headers.get("Content-Type", "")
+        return (200, {}, "{}")
+
+    responses.add_callback(responses.PUT, "https://trello.com/1/cards/c1", callback=cb)
+    c = _session_client()
+    c.move_inbox_card("c1", "TBP", "HOME")
+    assert "idList=TBP" in captured["body"] and "idBoard=HOME" in captured["body"]
+    assert "dsc=DSC123" in captured["body"]        # CSRF token submitted in the body
+    assert "urlencoded" in captured["ct"]
+
+
+@responses.activate
+def test_web_request_raises_inbox_auth_error_on_401():
+    import pytest
+    from counterfactual_podcast.trello import InboxAuthError, API_BASE as _AB
+    responses.add(responses.GET, f"{_AB}/1/members/me",
+                  json={"inbox": {"idList": "INBOX", "idBoard": "IB"}}, status=200)
+    responses.add(responses.GET, "https://trello.com/1/lists/INBOX/cards", status=401)
+    c = _session_client()
+    with pytest.raises(InboxAuthError):
+        c.get_inbox_cards()
+
+
+def test_inbox_methods_require_session_cookie():
+    import pytest
+    from counterfactual_podcast.trello import InboxAuthError
+    c = TrelloClient("K", "T", sleep=lambda *_: None, session_cookie="")  # no cookie
+    with pytest.raises(InboxAuthError):
+        c.move_inbox_card("c1", "TBP", "HOME")

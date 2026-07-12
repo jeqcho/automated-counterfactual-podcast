@@ -50,6 +50,11 @@ PROFILE_DOC = ROOT / "private" / "jay-profile-for-article-classification.scoped.
 # --- Secrets --------------------------------------------------------------
 TRELLO_KEY = os.environ.get("TRELLO_API_KEY")
 TRELLO_TOKEN = os.environ.get("TRELLO_TOKEN")
+# The native Trello Inbox is NOT reachable with an API token (Trello hard-401s it regardless
+# of scope — confirmed 2026-07-12). Phase 1 reads/moves Inbox cards via a logged-in web
+# SESSION COOKIE instead: the full `cookie:` header copied from the Trello web app's DevTools
+# (contains the session token + the `dsc` CSRF cookie). Expires periodically → refresh it.
+TRELLO_SESSION_COOKIE = os.environ.get("TRELLO_SESSION_COOKIE", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")

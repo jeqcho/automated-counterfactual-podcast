@@ -23,8 +23,8 @@ class FakeClient:
         self.archived = getattr(self, "archived", [])
         self.archived.append(card_id)
 
-    def move_card(self, card_id, list_id, pos="bottom", board_id=None, retry_unauthorized=False):
-        self.moved.append((card_id, list_id))
+    def move_inbox_card(self, card_id, to_list, to_board):
+        self.moved.append((card_id, to_list))
 
 
 async def test_phase1_moves_every_linked_card_no_llm():
@@ -68,3 +68,19 @@ async def test_phase1_dry_run_moves_nothing():
     res = await run_phase1(client, apply=False)
     assert res["moved_to_review"] == 1   # would move
     assert client.moved == []            # but didn't (dry run)
+
+
+async def test_phase1_expired_cookie_skips_move_still_dedups():
+    # If the session cookie is dead, get_inbox_cards raises InboxAuthError. Phase 1 must not
+    # crash: it reports the error, moves nothing, but still runs dedup on 'To Be Processed'.
+    from counterfactual_podcast.trello import InboxAuthError
+
+    class DeadCookieClient(FakeClient):
+        def get_inbox_cards(self):
+            raise InboxAuthError("session cookie rejected (401) — refresh TRELLO_SESSION_COOKIE")
+
+    client = DeadCookieClient([])
+    res = await run_phase1(client, apply=True)
+    assert res["moved_to_review"] == 0
+    assert res["inbox_error"] and "refresh" in res["inbox_error"].lower()
+    assert res["applied"] is True         # dedup pass still ran (no crash)
