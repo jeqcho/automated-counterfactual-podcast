@@ -122,6 +122,24 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
     target_sec = target_hours * 3600
     queue_id = client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
     queue_cards = client.get_cards(queue_id)
+
+    # SELF-HEAL: evict "orphan" queue cards that have no cached audio. A card only enters the
+    # queue AFTER its audio synthesizes (below), but the audio row reaches R2 only on the
+    # end-of-run cache push — so a run KILLED before that push leaves the card in the queue (the
+    # Trello move is a live write) with its audio lost. Such cards are invisible in the feed
+    # (episodes_for_queue skips no-audio cards) yet clog the queue and are pulled out of their
+    # reading lists. Move them to 'To Be Processed' so the next routing re-ranks them back in.
+    orphans = [c for c in queue_cards if not cache.get_audio(c.id)]
+    if orphans:
+        review_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
+        for c in orphans:
+            client.move_card(c.id, review_id, pos="bottom")
+        if log:
+            log.info(f"self-heal: evicted {len(orphans)} audio-less queue card(s) -> "
+                     f"'{config.TO_BE_PROCESSED_LIST_NAME}' (debris from a killed run; "
+                     f"they'll be re-ranked on the next routing)")
+        queue_cards = [c for c in queue_cards if cache.get_audio(c.id)]
+
     in_queue = {c.id for c in queue_cards}
 
     def secs(card_id: str) -> float:

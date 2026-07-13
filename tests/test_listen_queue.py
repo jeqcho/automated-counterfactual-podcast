@@ -153,3 +153,37 @@ async def test_synth_concurrency_is_one_for_unsafe_engine(monkeypatch):
         name = "kokoro"
     synth = make_synth(Cache(":memory:"), engine=Kokoro())
     assert synth.concurrency == 1  # espeak not thread-safe -> sequential
+
+
+async def test_self_heal_evicts_audioless_queue_cards():
+    # Queue has one voiced card (q_ok) and two orphans (no cached audio). The orphans must be
+    # moved to 'To Be Processed'; the voiced one stays. No top-up needed (already at target).
+    from counterfactual_podcast.models import AudioAsset
+
+    class TwoListClient:
+        def __init__(self):
+            self.moved = []
+            self.positions = []
+            self.queue = [Card("q_ok", "q_ok"), Card("orphan1", "orphan1"),
+                          Card("orphan2", "orphan2")]
+        def ensure_list(self, name):
+            return "TBP" if name == config.TO_BE_PROCESSED_LIST_NAME else "QUEUE"
+        def get_cards(self, list_id):
+            return list(self.queue) if list_id == "QUEUE" else []
+        def move_card(self, card_id, list_id, pos="bottom"):
+            self.moved.append((card_id, list_id))
+        def set_card_position(self, card_id, pos):
+            self.positions.append((card_id, pos))
+
+    class OneAudioCache:
+        def get_audio(self, card_id):
+            return AudioAsset("q_ok", "/tmp/q_ok.mp3", 20 * 3600.0, "fake") if card_id == "q_ok" else None
+
+    feats = {"q_ok": CardFeatures("q_ok", "p9", 5, "d", "html", True)}
+    client = TwoListClient()
+    res = await ensure_listen_queue(client, cache=OneAudioCache(), enricher=FakeEnricher(feats),
+                                    comparator=FakeComparator(), synth=await fake_synth_factory(),
+                                    target_hours=20)
+    # both orphans evicted to To Be Processed, voiced card untouched
+    assert ("orphan1", "TBP") in client.moved and ("orphan2", "TBP") in client.moved
+    assert not any(cid == "q_ok" for cid, _ in client.moved)
