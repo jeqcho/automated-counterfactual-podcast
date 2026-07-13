@@ -38,6 +38,7 @@ const FORWARD_ENV = [
   "MAX_FETCH_CONCURRENCY",
   "MAX_LLM_CONCURRENCY",
   "TRELLO_SESSION_COOKIE",
+  "PHASE2_PARALLEL_SORT",
 ];
 
 export class PodcastContainer extends Container {

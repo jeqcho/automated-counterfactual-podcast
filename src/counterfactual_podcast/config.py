@@ -102,6 +102,11 @@ SPEAK_TITLE_INTRO = os.environ.get("SPEAK_TITLE_INTRO", "1") not in ("0", "false
 # API-bound (no such constraint) and can synth many episodes in parallel — big speedup on the
 # queue build. Only engines in PARALLEL_SAFE_TTS use SYNTH_CONCURRENCY; others run at 1.
 SYNTH_CONCURRENCY = int(os.environ.get("SYNTH_CONCURRENCY", "8"))
+# Phase 2 ranks the batch's cards CONCURRENTLY (per-list sort+merge, all lists in parallel)
+# instead of one card at a time — big speedup on the routing phase. Set "0" to fall back to
+# the sequential path. Parallelism is still bounded by MAX_LLM_CONCURRENCY (the comparator's
+# semaphore), so it can't spike past the container's ceiling.
+PHASE2_PARALLEL_SORT = os.environ.get("PHASE2_PARALLEL_SORT", "1") not in ("0", "false", "False", "")
 PARALLEL_SAFE_TTS = frozenset(
     s.strip() for s in os.environ.get("PARALLEL_SAFE_TTS", "google,openai").split(",") if s.strip())
 # NB: no per-card text cap — we synthesize the FULL article (one article = one episode).

@@ -54,7 +54,10 @@
     // mid-run (see CLAUDE.md "container gets killed mid-run"). Cap it low on the cloud;
     // the Mac keeps the default 50 (it has the resources).
     "MAX_FETCH_CONCURRENCY": "8",
-    "MAX_LLM_CONCURRENCY": "8"
+    "MAX_LLM_CONCURRENCY": "8",
+    // Phase 2 ranks the batch concurrently (per-list sort+merge, all lists parallel). Set to
+    // "0" here + redeploy to fall back to the sequential path if it ever misbehaves.
+    "PHASE2_PARALLEL_SORT": "1"
   },
 
   // No cron triggers — both phases are invoked on demand via the Trello Butler buttons

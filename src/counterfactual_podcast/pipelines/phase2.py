@@ -12,10 +12,49 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from collections import OrderedDict
+
 from .. import config
 from ..classify import target_list_id
-from ..sort import insert_sorted
+from ..sort import insert_sorted, merge_presorted, merge_sort
 from .weekly import _insertion_pos  # shared fractional-position helper
+
+
+async def _maybe_checkpoint(checkpoint, log, note):
+    """Persist the cache to R2 (if a checkpoint fn is configured), off the event loop."""
+    if checkpoint is None:
+        return
+    if log:
+        log.info(f"  [checkpoint] persisting cache {note}")
+    maybe = checkpoint()
+    if asyncio.iscoroutine(maybe):
+        await maybe
+
+
+def _assign_positions(ordered, pos_by_id, newcomer_ids) -> dict:
+    """Fractional Trello positions for the newcomers in a merged priority order.
+
+    ``ordered`` interleaves the destination list's existing cards (known positions in
+    ``pos_by_id``) with newly-routed cards. A newcomer takes a position strictly between its
+    nearest existing neighbours; a RUN of consecutive newcomers is spaced evenly across that
+    gap (so batch-inserted same-list cards keep their relative order). Returns
+    ``{card_id: pos}`` for newcomers only."""
+    out, n, i = {}, len(ordered), 0
+    while i < n:
+        if ordered[i].card_id not in newcomer_ids:
+            i += 1
+            continue
+        j = i
+        while j < n and ordered[j].card_id in newcomer_ids:
+            j += 1
+        # i-1 and j (if present) are always EXISTING cards (a newcomer run is maximal).
+        lp = pos_by_id.get(ordered[i - 1].card_id, 0.0) if i > 0 else 0.0
+        rp = pos_by_id.get(ordered[j].card_id, lp + 2000.0) if j < n else lp + 2000.0
+        run = j - i
+        for k in range(run):
+            out[ordered[i + k].card_id] = lp + (rp - lp) * (k + 1) / (run + 1)
+        i = j
+    return out
 
 
 async def run_phase2(client, cache, enricher, classifier, comparator,
@@ -26,8 +65,25 @@ async def run_phase2(client, cache, enricher, classifier, comparator,
     if log:
         log.info(f"'To Be Processed' has {len(cards)} cards")
 
-    routed = []
-    done = 0  # cards actually routed (apply); used to checkpoint the cache every N cards
+    if apply and config.PHASE2_PARALLEL_SORT and cards:
+        routed = await _route_parallel(client, enricher, classifier, comparator, cards,
+                                       log=log, checkpoint=checkpoint,
+                                       checkpoint_every=checkpoint_every)
+    else:
+        routed = await _route_sequential(client, enricher, classifier, comparator, cards,
+                                         apply=apply, log=log, checkpoint=checkpoint,
+                                         checkpoint_every=checkpoint_every)
+
+    queue = await ensure_queue_fn() if apply else {"skipped": "dry-run"}
+    feed = publish_fn() if apply else {"skipped": "dry-run"}
+    return {"processed": len(cards), "routed": routed, "queue": queue, "feed": feed}
+
+
+async def _route_sequential(client, enricher, classifier, comparator, cards, *,
+                            apply, log, checkpoint, checkpoint_every) -> list:
+    """Original one-card-at-a-time path: enrich -> classify -> binary-insert -> move. Used for
+    dry-runs (classify only, no ranking) and when PHASE2_PARALLEL_SORT is off."""
+    routed, done = [], 0
     for card in cards:
         feats = await enricher.aenrich(card)
         label = (await classifier.aclassify(feats)).get("label", "system1")
@@ -45,23 +101,82 @@ async def run_phase2(client, cache, enricher, classifier, comparator,
         routed.append({"card_id": card.id, "label": label, "rank": rank})
         if log:
             log.info(f"  {card.name[:50]} -> {label}" + (f" @#{rank}" if rank else ""))
-
-        # Persist the cache mid-run so a container kill doesn't lose all the expensive
-        # extraction/digest/pairwise work — without this, a kill on a big UNCACHED batch
-        # leaves R2 untouched and every re-press redoes the same cards and dies again (the
-        # documented infinite re-press loop). With it, a re-press resumes near where it died.
         if apply and checkpoint is not None:
             done += 1
             if done % checkpoint_every == 0:
-                if log:
-                    log.info(f"  [checkpoint] persisting cache after {done} cards")
-                maybe = checkpoint()
-                if asyncio.iscoroutine(maybe):
-                    await maybe
+                await _maybe_checkpoint(checkpoint, log, f"after {done} cards")
+    return routed
 
-    queue = await ensure_queue_fn() if apply else {"skipped": "dry-run"}
-    feed = publish_fn() if apply else {"skipped": "dry-run"}
-    return {"processed": len(cards), "routed": routed, "queue": queue, "feed": feed}
+
+async def _route_parallel(client, enricher, classifier, comparator, cards, *,
+                          log, checkpoint, checkpoint_every) -> list:
+    """Parallel routing (apply only). The slow part — enrichment and the pairwise LLM
+    comparisons — runs CONCURRENTLY (bounded by the comparator/enricher semaphores); the
+    Trello I/O stays serial on the main thread (it's fast and not thread-safe).
+
+      A. enrich + classify every newcomer concurrently, group by destination list
+      B. read + enrich each destination list once (hoisted out of the per-card loop)
+      C. per list, in parallel: sort the newcomers among themselves (merge_sort) then
+         merge that run into the existing list (merge_presorted) — Jay's "sort within,
+         then combine". Different lists never compare against each other.
+      D. apply the moves + rank markers serially, in priority order.
+    """
+    # A) enrich + classify concurrently
+    async def enrich_classify(card):
+        feats = await enricher.aenrich(card)
+        label = (await classifier.aclassify(feats)).get("label", "system1")
+        return card, feats, label
+
+    triples = await asyncio.gather(*[enrich_classify(c) for c in cards])
+    groups: "OrderedDict[str, list]" = OrderedDict()   # list_id -> [(card, feats), ...]
+    labels = {}
+    for card, feats, label in triples:
+        groups.setdefault(target_list_id(label), []).append((card, feats))
+        labels[card.id] = label
+    if log:
+        by_label = {}
+        for c, _, lab in triples:
+            by_label[lab] = by_label.get(lab, 0) + 1
+        log.info(f"enriched+classified {len(cards)} cards, ranking in parallel: "
+                 + ", ".join(f"{lab}={n}" for lab, n in by_label.items()))
+
+    # B) read each destination list once
+    ctx = {}
+    for lid, members in groups.items():
+        existing = client.get_cards(lid)
+        ctx[lid] = ({c.id: c.pos for c in existing}, await enricher.aenrich_many(existing))
+
+    # C) per-list sort+merge, all lists concurrent
+    async def rank_group(lid, members):
+        _pos_by_id, existing_feats = ctx[lid]
+        sorted_new = await merge_sort([f for _, f in members], comparator.acompare)
+        ordered = await merge_presorted([existing_feats, sorted_new], comparator.acompare)
+        return lid, ordered
+
+    group_orders = await asyncio.gather(*[rank_group(lid, m) for lid, m in groups.items()])
+    # comparisons are all cached now — persist before touching Trello
+    await _maybe_checkpoint(checkpoint, log, "after ranking (pre-write)")
+
+    # D) serial Trello writes in priority order
+    card_by_id = {c.id: c for m in groups.values() for c, _ in m}
+    newcomer_ids = {c.id for m in groups.values() for c, _ in m}
+    routed, done = [], 0
+    for lid, ordered in group_orders:
+        pos_by_id, _ = ctx[lid]
+        positions = _assign_positions(ordered, pos_by_id, newcomer_ids)
+        for idx, f in enumerate(ordered):
+            if f.card_id not in newcomer_ids:
+                continue
+            card, rank = card_by_id[f.card_id], idx + 1
+            client.move_card(card.id, lid, pos=positions[f.card_id])
+            client.set_rank_marker(card, rank, f.est_minutes, f.digest or "")
+            routed.append({"card_id": card.id, "label": labels[card.id], "rank": rank})
+            if log:
+                log.info(f"  {card.name[:50]} -> {labels[card.id]} @#{rank}")
+            done += 1
+            if checkpoint is not None and done % checkpoint_every == 0:
+                await _maybe_checkpoint(checkpoint, log, f"after {done} writes")
+    return routed
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:
