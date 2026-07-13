@@ -485,6 +485,18 @@ run) → review → `--apply`.
   log frozen >3 min ≈ a hang, not a slow card. NB: a single card legitimately taking ~4 min (many
   Opus escalations) can trip a 3-min stall alarm yet self-recover — confirm by re-checking whether
   `routed=` advanced before killing.
+- **Listen Queue SELF-HEALS orphan (audio-less) cards (2026-07-12).** A card only enters the
+  queue AFTER its audio synthesizes, but the audio row reaches R2 only on the end-of-run cache
+  push — so a run KILLED before that push (the container kills) leaves the card in the queue (a
+  live Trello move) with its audio never persisted. Result: cards in the Listen Queue with no
+  cached audio → invisible in the feed (`episodes_for_queue` skips them) yet clogging the queue
+  and pulled out of their reading lists. Found 46 such orphans (half the queue) on 2026-07-12.
+  Fix: `ensure_listen_queue` now evicts any audio-less queue card to `To Be Processed` at the
+  start of each build (they get re-ranked into the reading lists on the next routing), so
+  orphans can't accumulate regardless of cause. NB re-routing re-CLASSIFIES them — the 46
+  cleaned-up cards mostly landed in System 2 (deep read, excluded from the queue), which is the
+  classifier's call, not a bug. The root-cause kills are themselves now rare (checkpointing +
+  concurrency cap + Trello/Anthropic timeouts).
 - **Phases are MUTUALLY EXCLUSIVE — the trigger refuses to start one while the other runs
   (2026-06-28).** Both phases pull the same R2 `state/cache.sqlite3` into the same local path
   at start and push it back at finish, so running them concurrently races on that file (SQLite
