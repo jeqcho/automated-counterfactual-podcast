@@ -227,3 +227,6 @@ private/
 /data/voices*
 .pytest_cache/
 node_modules/
+
+# wrangler local state/cache (account id, build cache) — never commit
+.wrangler/
