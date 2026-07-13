@@ -102,11 +102,12 @@ async def copeland_rank(
     return [items[k] for k in order]
 
 
-async def insert_sorted(
-    item: T, ordered: Sequence[T], acompare: Comparator
-) -> list[T]:
-    """Binary-insert `item` into a descending-priority `ordered` list (~log2 n)."""
-    ordered = list(ordered)
+async def insert_index(item: T, ordered: Sequence[T], acompare: Comparator) -> int:
+    """Binary-search the index where `item` belongs in descending-priority `ordered` (~log2 n).
+
+    Unlike ``merge_presorted``/``_merge`` (a LINEAR scan — O(n) comparisons, catastrophic for
+    inserting a few items into a big list), this is O(log n). Independent items can be searched
+    against the SAME ``ordered`` snapshot concurrently — the basis for Phase 2's parallel route."""
     lo, hi = 0, len(ordered)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -115,5 +116,13 @@ async def insert_sorted(
             hi = mid          # item ranks before mid -> go left
         else:
             lo = mid + 1
-    ordered.insert(lo, item)
+    return lo
+
+
+async def insert_sorted(
+    item: T, ordered: Sequence[T], acompare: Comparator
+) -> list[T]:
+    """Binary-insert `item` into a descending-priority `ordered` list (~log2 n)."""
+    ordered = list(ordered)
+    ordered.insert(await insert_index(item, ordered, acompare), item)
     return ordered

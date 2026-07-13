@@ -199,3 +199,25 @@ async def test_phase2_parallel_same_list_relative_order(monkeypatch):
                      FakeComparator(), _noop, lambda: {}, apply=True)
     # merged p9,p7,p4,p1 -> n7 ranks above n4
     assert client.marks["n7"] == 2 and client.marks["n4"] == 3
+
+
+async def test_merge_newcomers_is_logarithmic_not_linear():
+    # Inserting 1 newcomer into a 256-item sorted list must take ~log2(256)=8 comparisons,
+    # NOT ~128 (the linear merge_presorted bug). Guards the perf fix.
+    from counterfactual_podcast.pipelines.phase2 import _merge_newcomers
+
+    class CountingCmp:
+        def __init__(self): self.n = 0
+        async def acompare(self, a, b):
+            self.n += 1
+            return a if int(a.title[1:]) >= int(b.title[1:]) else b
+
+    existing = [CardFeatures(f"e{i}", f"p{1000 - i}", 5, "d", "html", True) for i in range(256)]
+    newcomer = CardFeatures("nX", "p500", 5, "d", "html", True)   # lands mid-pack
+    cmp = CountingCmp()
+    ordered = await _merge_newcomers(existing, [newcomer], cmp.acompare)
+    assert len(ordered) == 257
+    assert cmp.n <= 12          # ~log2(256); linear merge would be ~500
+    # landed in the middle, not the top/bottom
+    idx = next(i for i, f in enumerate(ordered) if f.card_id == "nX")
+    assert 200 < idx < 320 or 240 < idx < 260   # roughly where p500 belongs (~250)

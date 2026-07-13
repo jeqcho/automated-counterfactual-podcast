@@ -35,7 +35,7 @@ RUN uv sync --extra google --no-dev --frozen
 # (no block-buffering) — pairs with the /logs ring-buffer endpoint for run visibility.
 ENV TTS_ENGINE=google \
     PYTHONUNBUFFERED=1 \
-    CF_BUILD_MARKER=phase2-parallel-sort-20260712b
+    CF_BUILD_MARKER=phase2-parallel-binsert-20260712c
 
 EXPOSE 8080
 

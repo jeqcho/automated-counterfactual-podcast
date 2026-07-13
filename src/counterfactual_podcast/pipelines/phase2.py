@@ -12,12 +12,34 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 from .. import config
 from ..classify import target_list_id
-from ..sort import insert_sorted, merge_presorted, merge_sort
+from ..sort import insert_index, insert_sorted, merge_sort
 from .weekly import _insertion_pos  # shared fractional-position helper
+
+
+async def _merge_newcomers(existing_feats, newcomers, acompare) -> list:
+    """Insert a few `newcomers` into a big already-sorted `existing_feats` and return the full
+    priority order. Each newcomer is BINARY-searched into `existing` (O(log n)), and the
+    searches run CONCURRENTLY (independent against the fixed snapshot). Same-slot newcomers are
+    ordered by first sorting the newcomers among themselves (`merge_sort`), so a batch of
+    same-list cards keeps correct relative order. Avoids the O(n) linear merge_presorted scan."""
+    if not newcomers:
+        return list(existing_feats)
+    sorted_new = await merge_sort(newcomers, acompare)          # tiebreak order for same slot
+    idxs = await asyncio.gather(                                # parallel binary searches
+        *[insert_index(f, existing_feats, acompare) for f in sorted_new])
+    at = defaultdict(list)
+    for f, idx in zip(sorted_new, idxs):
+        at[idx].append(f)                                       # sorted_new order preserved
+    ordered = []
+    for i in range(len(existing_feats) + 1):
+        ordered.extend(at.get(i, []))
+        if i < len(existing_feats):
+            ordered.append(existing_feats[i])
+    return ordered
 
 
 async def _maybe_checkpoint(checkpoint, log, note):
@@ -146,11 +168,11 @@ async def _route_parallel(client, enricher, classifier, comparator, cards, *,
         existing = client.get_cards(lid)
         ctx[lid] = ({c.id: c.pos for c in existing}, await enricher.aenrich_many(existing))
 
-    # C) per-list sort+merge, all lists concurrent
+    # C) per-list rank (binary-insert newcomers, parallel), all lists concurrent
     async def rank_group(lid, members):
         _pos_by_id, existing_feats = ctx[lid]
-        sorted_new = await merge_sort([f for _, f in members], comparator.acompare)
-        ordered = await merge_presorted([existing_feats, sorted_new], comparator.acompare)
+        ordered = await _merge_newcomers(existing_feats, [f for _, f in members],
+                                         comparator.acompare)
         return lid, ordered
 
     group_orders = await asyncio.gather(*[rank_group(lid, m) for lid, m in groups.items()])
