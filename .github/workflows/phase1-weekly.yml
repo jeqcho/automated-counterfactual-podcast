@@ -1,0 +1,108 @@
+# Weekly "Extract readables" (Phase 1): move Trello Inbox links -> 'To Be Processed'.
+#
+# Runs off Jay's Mac, on the same Saturday cadence as the weekly-review repo, so the
+# review list is already populated when he sits down. Phase 2 (ranking) stays MANUAL
+# on purpose — he reviews 'To Be Processed' and drags out anything he doesn't want
+# before the expensive LLM sort runs.
+#
+# WHY A JOB AND NOT JUST A CRON: POST /phase1 is fire-and-forget — it returns 200 the
+# instant the run starts, so a bare curl reports success even if the pipeline then dies.
+# Every failure this project has actually hit (expired Trello cookie, workspace spend
+# cap, corrupt R2 cache) produces the SAME symptom: "it ran, nothing happened". So this
+# job waits for completion, reads the logs, and fails loudly on each known signature —
+# a failed job emails you; a silent no-op doesn't.
+name: phase1-weekly
+
+on:
+  schedule:
+    # Sat 12:00 UTC = 08:00 EDT / 05:00 PDT — the WHOOP slot in weekly-review, ~2h
+    # before the weekly-review email lands. Cron has no timezone; the 1h DST drift is
+    # harmless because nothing here is time-window sensitive.
+    - cron: "0 12 * * 6"
+  workflow_dispatch:
+
+concurrency:
+  # Phases are mutually exclusive server-side (they share one R2 cache); never stack runs.
+  group: phase1-weekly
+  cancel-in-progress: false
+
+jobs:
+  extract-readables:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE: https://counterfactual-podcast.chooijqweb.workers.dev
+      TOKEN: ${{ secrets.TRIGGER_TOKEN }}
+
+    steps:
+      - name: Trigger Phase 1
+        run: |
+          set -euo pipefail
+          [ -n "$TOKEN" ] || { echo "::error::TRIGGER_TOKEN secret is not set"; exit 1; }
+
+          # Retry only transport/5xx errors — the container scales to zero and a cold
+          # start can take tens of seconds. A 4xx is a real answer; don't retry it.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' \
+                     --max-time 180 -X POST "$BASE/phase1" \
+                     -H "X-Trigger-Token: $TOKEN" || echo 000)
+            body=$(cat /tmp/resp.txt 2>/dev/null || true)
+            echo "attempt $attempt -> HTTP $code $body"
+            case "$code" in
+              200) echo "started"; exit 0 ;;
+              409) echo "::error::Busy — the other phase is still running. $body"; exit 1 ;;
+              401) echo "::error::Auth rejected — TRIGGER_TOKEN is stale."; exit 1 ;;
+              000|5*) sleep $((attempt * 15)) ;;
+              *)   echo "::error::Unexpected HTTP $code: $body"; exit 1 ;;
+            esac
+          done
+          echo "::error::Could not reach the worker after 5 attempts"; exit 1
+
+      - name: Wait for the run to finish
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 80); do   # 80 * 15s = 20 min ceiling
+            running=$(curl -sS --max-time 60 "$BASE/health" | jq -r '.running.phase1')
+            [ "$running" = "false" ] && { echo "finished after ~$((i*15))s"; exit 0; }
+            sleep 15
+          done
+          echo "::error::Phase 1 still running after 20 min — it is LLM-free and should take ~1 min. Check $BASE/logs"
+          exit 1
+
+      - name: Collect logs
+        if: always()
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 60 "$BASE/logs?n=200" -H "X-Trigger-Token: $TOKEN" \
+            | jq -r '.lines[]' | grep -v 'trafilatura' > /tmp/logs.txt || true
+          {
+            echo '### Phase 1 log'
+            echo '```'
+            cat /tmp/logs.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/logs.txt
+
+      - name: Fail on known silent failures
+        if: always()
+        run: |
+          set -uo pipefail
+          fail() { echo "::error::$1"; FAILED=1; }
+          FAILED=0
+
+          # Each of these has caused a "pressed it, nothing happened" incident.
+          grep -q 'INBOX UNAVAILABLE' /tmp/logs.txt && \
+            fail "Trello session cookie expired - run scripts/refresh_inbox_cookie.py, then update .env and 'wrangler secret put TRELLO_SESSION_COOKIE'"
+          grep -q 'database disk image is malformed' /tmp/logs.txt && \
+            fail "R2 cache is corrupt - download state/cache.sqlite3, run 'sqlite3 bad.db .recover | sqlite3 good.db', verify integrity_check, re-upload"
+          grep -qi 'workspace API usage limits' /tmp/logs.txt && \
+            fail "Anthropic workspace spend cap hit - raise it in the Console (adding credits does NOT clear it)"
+          grep -q 'pipeline phase1 crashed' /tmp/logs.txt && \
+            fail "Phase 1 raised an unhandled exception — see the log above."
+
+          # Positive confirmation: the run must have actually reported on the Inbox.
+          # Zero moved cards is fine (empty Inbox); zero phase1 output is not.
+          grep -qE 'phase1: inbox [0-9]+ cards' /tmp/logs.txt || \
+            fail "No Phase 1 activity in the logs - the run produced no Inbox report at all"
+
+          exit $FAILED
