@@ -207,6 +207,19 @@ run) → review → `--apply`.
   `To Be Processed` (the SAME list —
   no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
   queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
+- **⚠️ Pasted LIST cards are invisible to the pipeline (2026-07-25).** The Inbox collects
+  screenshots-of-tweets-as-text: a card whose *name* is a multi-item reading list ("post AGI
+  classics: - The Intelligence Curse - Gradual Disempowerment - …"). `_has_link` finds no URL,
+  so Phase 1 leaves it in the Inbox **forever** — it is never ranked, never voiced, and never
+  shows up as a failure. Nothing in the system flags it; you only find it by eyeballing the
+  Inbox. Fix is manual expansion: `scripts/split_reading_list_card.py` (dry-run default,
+  `--apply`, undo manifest to `outputs/`) resolves each item to a real URL and creates one card
+  per item in `To Be Processed` — **URL as an ATTACHMENT, clean title as the name** (the board
+  convention; see the link-preview gotcha). Always run each candidate URL through `extract()`
+  first: a landing page often extracts to a ~1k-word table of contents while the real text is in
+  a PDF or per-chapter pages (Situational Awareness: 940w site vs 51,017w PDF vs 8 chapters of
+  1.3k–9.5k each; Intelligence Curse: 826w site vs 21,537w PDF). Prefer splitting a book-length
+  PDF into its chapter pages — one 51k-word enclosure is ~5.7h of audio with no seek points.
 - **Weekly Phase-1 cron (added 2026-07-25):** `.github/workflows/phase1-weekly.yml` fires
   `POST /phase1` every **Saturday 12:00 UTC** (08:00 EDT / 05:00 PDT — the WHOOP slot in the
   `weekly-review` repo, ~2h before that repo's weekly email), so `To Be Processed` is already
