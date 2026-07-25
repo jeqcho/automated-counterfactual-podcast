@@ -104,11 +104,12 @@ class Classifier:
         async with self._sem:
             resp = await self.client.messages.create(
                 model=self.model,
-                max_tokens=300,
+                max_tokens=config.TOOL_MAX_TOKENS,
                 system=self._system(),
                 messages=[{"role": "user", "content": _fmt(feats)}],
                 tools=[CLASSIFY_TOOL],
                 tool_choice={"type": "tool", "name": "classify"},
+                **config.thinking_kwargs(self.model),
             )
         for block in getattr(resp, "content", []) or []:
             inp = getattr(block, "input", None)

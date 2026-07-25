@@ -95,12 +95,15 @@ class Comparator:
         async with self._sem:
             resp = await self.client.messages.create(
                 model=model,
-                max_tokens=300,
+                max_tokens=config.TOOL_MAX_TOKENS,
                 system=self._system(),
                 messages=[{"role": "user", "content": user}],
                 tools=[DECIDE_TOOL],
                 tool_choice={"type": "tool", "name": "decide"},
+                **config.thinking_kwargs(model),
             )
+        # NB: with thinking on, content[0] is a thinking block — scan for the block that
+        # carries tool input rather than indexing, which is what this already does.
         for block in getattr(resp, "content", []) or []:
             inp = getattr(block, "input", None)
             if inp is not None:

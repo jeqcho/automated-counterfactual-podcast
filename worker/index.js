@@ -39,6 +39,16 @@ const FORWARD_ENV = [
   "MAX_LLM_CONCURRENCY",
   "TRELLO_SESSION_COOKIE",
   "PHASE2_PARALLEL_SORT",
+  // Model + thinking knobs (defaults live in config.py). Forwarded so the tier, the
+  // thinking mode, and the effort level can be retuned via wrangler `vars` without a
+  // code change — a var NOT listed here never reaches the container.
+  "CLAUDE_MODEL",
+  "CLAUDE_MODEL_ESCALATE",
+  "CLAUDE_MODEL_DIGEST",
+  "CF_THINKING",
+  "CF_EFFORT",
+  "TOOL_MAX_TOKENS",
+  "ANTHROPIC_TIMEOUT_SECONDS",
 ];
 
 export class PodcastContainer extends Container {

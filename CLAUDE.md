@@ -138,7 +138,8 @@ All 18 plan tasks implemented + tested. **91 unit tests passing** (all LLM/netwo
 - ✅ `reports/usage.md` runbook.
 
 ### Live smoke-test results (non-mutating, real APIs)
-- **Model IDs** sonnet-4-6 / opus-4-8 / haiku-4-5 all verified live.
+- **Model IDs** sonnet-4-6 / opus-4-8 / haiku-4-5 all verified live. *(Superseded
+  2026-07-25: now sonnet-5 / opus-5 / haiku-4-5 — see the migration gotcha.)*
 - **Ranking pipeline** (6 real Life-Optim cards, read-only): real extraction + Haiku
   digests + Sonnet pairwise → sensible impact order in ~40s, ~$0.10. Rationales cite
   real content. (`scripts/smoke_live.py`, logs/smoke_rank2-*.log)
@@ -177,7 +178,8 @@ run) → review → `--apply`.
   article text (free) → `est_minutes` = words/230 (code) → a ~150-token **impact digest**
   via Haiku, written *through the profile lens*. Comparisons ship tiny digests, not full
   text → ~5× cheaper. Everything cached in SQLite (resumable, near-free re-runs).
-- **Comparator:** Sonnet 4.6, escalating genuinely-close calls (step≥6) to Opus 4.8.
+- **Comparator:** Sonnet 5, escalating genuinely-close calls (step≥6) to Opus 5 (see the
+  2026-07-25 migration note); digests stay on Haiku 4.5 (there is no Haiku 5).
   Profile doc is prompt-cached across all calls.
 - **TTS:** Kokoro local for Mac runs; **Google Cloud Neural2** chosen for cloud hosting
   (pluggable: `get_engine("kokoro"|"openai"|"google")`). Reading-time drives *ranking*;
@@ -270,7 +272,8 @@ run) → review → `--apply`.
   commit it. `.env` is gitignored.
 - **Commit AND push often** (not just at the end) — Jay's explicit preference. Work
   commits straight to `main`.
-- Co-author trailer on commits: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+- Co-author trailer on commits, naming the model that actually wrote the change (as of
+  2026-07-25): `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
 - Board mutations: reorder cards in place; annotate via an **idempotent description
   marker** (`<!--cf-->[#rank · est min · why]<!--/cf-->`), NOT comments.
 - Always write a JSON snapshot before mutating the board (sorts are reversible).
@@ -278,13 +281,59 @@ run) → review → `--apply`.
 ## Decisions locked
 
 - Ranking: pairwise (merge sort today, binary insertion weekly); context = scoped
-  profile doc; judge = Sonnet 4.6 + Opus 4.8 escalation; prompt-cached.
+  profile doc; judge = Sonnet 5 + Opus 5 escalation (was 4.6/4.8 until 2026-07-25);
+  adaptive thinking on; prompt-cached.
 - Architecture: Scenario C (Haiku digest enrichment → digest-based comparisons).
 - TTS = Kokoro (pluggable). Delivery = podcast RSS on R2 (UUID-unlisted privacy).
 - Annotation = description marker. Rollout = Life-Optim pilot → approve → all 3 lists.
 
 ## Gotchas / learnings (append as you discover them)
 
+- **Model migration to the 5-family (2026-07-25).** Comparator/classifier `claude-sonnet-4-6`
+  → **`claude-sonnet-5`**, escalation `claude-opus-4-8` → **`claude-opus-5`**. Digests stay on
+  `claude-haiku-4-5-20251001` — **there is no Haiku 5**, 4.5 is still current. Notes:
+  - **Thinking must be set EXPLICITLY, not by omission.** Omitting the `thinking` field means
+    *no thinking* on Sonnet 4.6 / Opus 4.8 but *adaptive thinking* on Sonnet 5 / Opus 5 — the
+    same code silently changes behavior across the swap. `config.thinking_kwargs(model)` now
+    sends `{"type": "adaptive"}` (Anthropic's recommended default) to models that support it
+    and **nothing** to Haiku 4.5, which 400s on adaptive (pre-4.6 models only took the removed
+    `budget_tokens` form). Knobs: `CF_THINKING` (adaptive|disabled|off), `CF_EFFORT` ("" = API
+    default `high`; `medium` ≈ Sonnet 4.6 at high, the cheap step-down).
+  - **`max_tokens` caps thinking AND response text together** → the forced-tool calls went
+    300 → `config.TOOL_MAX_TOKENS` (4096). At 300 a thinking model can burn the whole budget
+    reasoning and never emit the tool call — a truncation, not an error, so it would have
+    surfaced as mass parse-failures falling back to the deterministic rule. Costs nothing
+    unused (only generated tokens bill).
+  - **Verified live 2026-07-25:** forced `tool_choice` + adaptive thinking works on both models
+    on the first-party API (2.1s Sonnet 5 / 3.1s Opus 5). *Bedrock* would require
+    `thinking={"type":"disabled"}` with forced tool choice — we're not on Bedrock.
+  - **Cost is ~unchanged, measured not guessed:** an easy comparison cost $0.00328 (no
+    thinking) vs $0.00331 (adaptive) — 119 vs 122 output tokens. Adaptive *chose* not to think
+    on an easy pair; that's the point of it. Spend is dominated by the 6.7k-token cached
+    profile doc, not by output. (Sonnet 5 intro pricing $2/$10 per MTok through 2026-08-31 is
+    *cheaper* than the Sonnet 4.6 it replaces.)
+  - **`ANTHROPIC_TIMEOUT_SECONDS` 90 → 180.** The 90s was tuned for <10s no-thinking calls; a
+    thinking comparison legitimately runs longer, and a too-tight timeout converts slow-but-fine
+    calls into 5 paid retries.
+  - **The 4,954 cached pairwise rows are all from 4.6/4.8.** `pairwise` is keyed `(a_id,b_id)`
+    with no model column, so a full re-sort would blend two models' judgments indistinguishably.
+    Rows *do* record their model → `scripts/purge_stale_pairwise.py` (dry-run default, `--apply`,
+    `--r2` to persist to the cloud) evicts them. **Not run** — a full purge means re-paying
+    ~4,954 × $0.0033 ≈ **$16**, and incremental weekly work barely touches old pairs. Purge only
+    before a deliberate clean re-rank.
+- **⚠️ Namespace new env knobs with `CF_` — the shell already exports `CLAUDE_*` vars.** The
+  thinking knob was first written as `CLAUDE_EFFORT`, and it immediately picked up `high` from
+  `CLAUDE_EFFORT=high` exported in Jay's shell for Claude Code — the pipeline started sending an
+  effort level nobody configured for it. Caught only because a debug print showed
+  `output_config` appearing unbidden. Exactly the shadowing class as the `ANTHROPIC_API_KEY`
+  gotcha below. Renamed to `CF_THINKING`/`CF_EFFORT`.
+- **A workspace usage limit is NOT a credit balance.** `invalid_request_error: "You have reached
+  your specified workspace API usage limits. You will regain access on <date>"` is a **spend cap
+  set in the Console** (Settings → Limits → workspace). **Adding credits does not clear it**
+  (verified 2026-07-25 — topping up changed nothing; the same key still 400'd). Fix is to raise
+  the cap, wait for the reset date, or use a key from a different workspace. Being a `400`
+  (not 429), the SDK does **not** retry it, so it kills a run instantly: Phase 2 died 11s in,
+  mid-`enrich`, taking down the whole `asyncio.gather` batch.
 - **`.env` must override the shell — `load_dotenv(override=True)`.** A personal
   `ANTHROPIC_API_KEY` exported in `~/.zshrc` (different account) silently shadowed the
   project's `.env` key because plain `load_dotenv()` does NOT overwrite already-set env
@@ -312,9 +361,13 @@ run) → review → `--apply`.
   `trello.com/1/authorize?...&key=...` URL, not a button.
 - Trello rate limits ~100 req/10s/token, 300/10s/key → client needs 429/Retry-After
   backoff + token-bucket.
-- Anthropic pricing (2026-06, /MTok): Sonnet 4.6 $3/$0.30 cache-read/$15; Opus 4.8
-  $5/$0.50/$25 (+~35% tokens, new tokenizer); Haiku 4.5 $1/$0.10/$5. Cache read = 0.1×
-  input; cost was dominated by article text → hence the digest pre-pass.
+- Anthropic pricing (2026-07, /MTok, in/cache-read/out) — **the tier we now run**: Sonnet 5
+  $3/$0.30/$15, but **$2/$0.20/$10 introductory through 2026-08-31**; Opus 5 $5/$0.50/$25
+  (same as the Opus 4.8 it replaces); Haiku 4.5 $1/$0.10/$5. Predecessors: Sonnet 4.6
+  $3/$0.30/$15, Opus 4.8 $5/$0.50/$25. Fable 5 is $10/$50 — a tier *above* Opus, not the
+  default upgrade path. Cache read = 0.1× input; cost is dominated by the cached profile doc
+  (~6.7k tok/call) → hence the digest pre-pass. NB Sonnet 5 uses the new tokenizer (~30% more
+  tokens for the same text than Sonnet 4.6), so re-baseline token counts, not just prices.
 - Kokoro-82M was #1 on TTS Arena (Jan 2026); good for long-form. Needs `ffmpeg`
   (system prereq) for WAV→MP3.
 - **Kokoro speed (2026-06-14, M-series Mac, benchmarked `scripts/bench_kokoro.py`):**

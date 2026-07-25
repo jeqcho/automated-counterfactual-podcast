@@ -66,17 +66,76 @@ R2_PUBLIC_BASE = os.environ.get("R2_PUBLIC_BASE")
 # .env so the feed URL Jay subscribes to never changes across re-publishes.
 PODCAST_PREFIX = os.environ.get("PODCAST_PREFIX", "")
 
-# --- Models (confirmed current 2026-06; overridable) ----------------------
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")               # comparator workhorse
-CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-4-8")  # close calls (step>=6)
+# --- Models (confirmed live 2026-07-25 via GET /v1/models; overridable) ---
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")                 # comparator workhorse
+CLAUDE_MODEL_ESCALATE = os.environ.get("CLAUDE_MODEL_ESCALATE", "claude-opus-5")    # close calls (step>=6)
+# Haiku 4.5 is STILL the current Haiku (there is no Haiku 5) — deliberately not bumped.
 CLAUDE_MODEL_DIGEST = os.environ.get("CLAUDE_MODEL_DIGEST", "claude-haiku-4-5-20251001")  # enrichment digests
+
+# --- Thinking (5-family) --------------------------------------------------
+# Anthropic's recommended default on every current model is ADAPTIVE thinking: Claude
+# decides per call how much to think. Set explicitly rather than by omission, because
+# the two families disagree on what "omitted" means (Sonnet/Opus 5 think by default;
+# Sonnet 4.6 / Opus 4.8 did not) — being explicit makes behavior model-independent.
+#   "adaptive" (default) | "disabled" (old no-thinking cost profile) | "off" (omit the field)
+# ⚠️ NAMESPACED `CF_` ON PURPOSE. The obvious names (CLAUDE_THINKING/CLAUDE_EFFORT) collide
+# with vars already exported in Jay's shell for Claude Code — `CLAUDE_EFFORT=high` was
+# silently flowing into this pipeline's API calls the moment the knob was added. Same class
+# of bug as the ANTHROPIC_API_KEY shadowing in CLAUDE.md: prefix anything new.
+CF_THINKING = os.environ.get("CF_THINKING", "adaptive")
+# "" = the API default (high). Lower to "medium"/"low" to cut spend: on Sonnet 5,
+# medium ≈ Sonnet 4.6 at high. Only applied to models that take `output_config.effort`.
+CF_EFFORT = os.environ.get("CF_EFFORT", "")
+
+# Models that accept `thinking={"type": "adaptive"}`. Haiku 4.5 is NOT one of them
+# (pre-4.6 models only take the removed `budget_tokens` form) — sending it 400s, so the
+# digest path must stay thinking-free. Prefix match: these IDs carry no date suffix.
+_ADAPTIVE_THINKING_PREFIXES = (
+    "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-mythos-5",
+    "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
+)
+
+
+def supports_adaptive_thinking(model: str) -> bool:
+    return any((model or "").startswith(p) for p in _ADAPTIVE_THINKING_PREFIXES)
+
+
+def thinking_kwargs(model: str) -> dict:
+    """Extra `messages.create()` kwargs (thinking + effort) for `model`.
+
+    Empty for models that don't support adaptive thinking, so the same call site works
+    for Haiku digests and 5-family comparisons without branching."""
+    if not supports_adaptive_thinking(model):
+        return {}
+    mode = (CF_THINKING or "").strip().lower()
+    kw: dict = {}
+    if mode in ("adaptive", "disabled"):
+        kw["thinking"] = {"type": mode}
+    effort = (CF_EFFORT or "").strip().lower()
+    # Opus 5 rejects disabled thinking above `high` effort (400). Clamp instead of
+    # letting a stray env combination fail every call in the run.
+    if mode == "disabled" and effort in ("xhigh", "max"):
+        effort = "high"
+    if effort:
+        kw["output_config"] = {"effort": effort}
+    return kw
+
+
+# max_tokens for the forced-tool JSON calls (comparator + classifier). This is a cap on
+# thinking AND response text TOGETHER: the old 300 was sized for a bare ~50-token tool
+# call, and with adaptive thinking on it would be consumed by reasoning, truncating the
+# turn before the tool call is emitted. Costs nothing when unused — only tokens actually
+# generated are billed.
+TOOL_MAX_TOKENS = int(os.environ.get("TOOL_MAX_TOKENS", "4096"))
 MAX_LLM_CONCURRENCY = int(os.environ.get("MAX_LLM_CONCURRENCY", "50"))     # concurrent Anthropic calls
 MAX_FETCH_CONCURRENCY = int(os.environ.get("MAX_FETCH_CONCURRENCY", "50"))  # concurrent URL fetches (threads)
 # Per-request Anthropic timeout + retries. The SDK default (600s) is FAR too long for our tiny
-# calls (digests 256 tok, comparisons 300 tok return in <10s): a single network hang on one
-# comparison froze the SEQUENTIAL queue merge for 16+ min (2026-06-28). A short read timeout +
-# generous retries makes a hung call fail fast and recover instead of stalling the whole sort.
-ANTHROPIC_TIMEOUT_SECONDS = float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "90"))
+# calls: a single network hang on one comparison froze the SEQUENTIAL queue merge for 16+ min
+# (2026-06-28). A short read timeout + generous retries makes a hung call fail fast and recover
+# instead of stalling the whole sort. Raised 90s -> 180s when adaptive thinking landed
+# (2026-07-25): a thinking comparison legitimately takes far longer than the <10s no-thinking
+# call this was tuned for, and a too-tight timeout turns slow-but-fine calls into 5 paid retries.
+ANTHROPIC_TIMEOUT_SECONDS = float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "180"))
 ANTHROPIC_MAX_RETRIES = int(os.environ.get("ANTHROPIC_MAX_RETRIES", "5"))
 # Hard cap on article text sent to Haiku per digest — bounds worst-case cost so one
 # giant page can't blow up spend. 24000 chars ≈ 6k tokens ≈ ~$0.006/card on Haiku.
