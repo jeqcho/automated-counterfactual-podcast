@@ -289,6 +289,17 @@ run) → review → `--apply`.
 
 ## Gotchas / learnings (append as you discover them)
 
+- **DEPLOYED 2026-07-25:** image `f9126276` → **`1cf5e096`** (app version 15 → 16), carrying the
+  5-family migration below. `CF_BUILD_MARKER=models-5family-20260725a`. Cloudflare secret
+  `ANTHROPIC_API_KEY` was also repointed at a project-scoped key (the old shared key was
+  spend-capped). **`wrangler containers info` is EVENTUALLY CONSISTENT** — it reported the OLD
+  image+version for ~30s after a successful deploy. Poll for ~60s before concluding the
+  singleton blocked the rollout; don't reach for `containers delete` on the first stale read.
+- **⚠️ The API key is NOT in the image.** Code ships via `wrangler deploy`; the key is a
+  Cloudflare *secret* (`wrangler secret put`), and non-secret knobs are `vars` in
+  wrangler.jsonc. Three independent tracks — a "full redeploy" updates exactly one. Secrets are
+  write-only (`wrangler secret list` shows names only), so the cloud's key can never be read
+  back to compare against `.env`; same blind spot that hid the PODCAST_PREFIX divergence.
 - **Model migration to the 5-family (2026-07-25).** Comparator/classifier `claude-sonnet-4-6`
   → **`claude-sonnet-5`**, escalation `claude-opus-4-8` → **`claude-opus-5`**. Digests stay on
   `claude-haiku-4-5-20251001` — **there is no Haiku 5**, 4.5 is still current. Notes:
