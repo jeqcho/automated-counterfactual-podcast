@@ -149,6 +149,10 @@ activemq-data/
 
 # Environments
 .env
+# Bare `.env` does NOT cover sibling files that hold the same secrets — a timestamped
+# `.env.bak-*` from a key rotation is a live credential one `git add -A` from being
+# committed. Glob the whole family.
+.env.*
 .envrc
 .venv
 env/
