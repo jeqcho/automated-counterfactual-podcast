@@ -207,6 +207,18 @@ run) → review → `--apply`.
   `To Be Processed` (the SAME list —
   no separate "▶ Ready to Process"; simplified 2026-06-20) → enrich → route+rank+markers →
   queue → publish. Both dry-run by default; Phase 2 is a no-op when `To Be Processed` is empty.
+- **Weekly Phase-1 cron (added 2026-07-25):** `.github/workflows/phase1-weekly.yml` fires
+  `POST /phase1` every **Saturday 12:00 UTC** (08:00 EDT / 05:00 PDT — the WHOOP slot in the
+  `weekly-review` repo, ~2h before that repo's weekly email), so `To Be Processed` is already
+  populated for the weekly review. `workflow_dispatch` for manual runs. Needs the repo secret
+  `TRIGGER_TOKEN` (same value as the `.env` / Cloudflare one). **Phase 2 stays MANUAL** — Jay
+  reviews the list before the expensive sort. The job is deliberately more than a curl: `POST
+  /phase1` is fire-and-forget (200 the moment the run *starts*), and every real failure here —
+  expired Trello cookie, Anthropic workspace spend cap, corrupt R2 cache — presents identically
+  as "it ran, nothing happened". So it waits for `/health` to go idle, dumps `/logs` into the
+  run summary, and **fails the job** on each known signature plus a positive check that the run
+  logged `phase1: inbox N cards` at all. A failed job emails; a silent no-op doesn't. Add a new
+  grep to the last step whenever a new silent-failure mode is discovered.
 - **Trello buttons (Butler Premium):** two board buttons issue Butler HTTP-request POSTs to
   the FastAPI trigger server (`server.py`, `/phase1` + `/phase2`, `X-Trigger-Token` auth),
   which runs the phase `--apply`. The server now lives in the **Cloudflare Container** behind
