@@ -49,8 +49,11 @@ ITEMS: list[tuple[str, str]] = [
      "https://danfaggella.com/flex/"),                          # html   2,047w  ~9m
     ("How Long Before Superintelligence? (1997)",
      "https://nickbostrom.com/superintelligence"),              # html   7,720w ~34m
-    ("The British Industrial Revolution in Global Perspective: "
-     "How Commerce Created the Industrial Revolution",
+    # Title verified against the PDF's own title page. NB it shares its MAIN title with
+    # Allen's 2009 Cambridge book -- this is his 2006 working draft of the same thesis,
+    # not the book, so the card name says so explicitly.
+    ("The British Industrial Revolution in Global Perspective: How Commerce Created the "
+     "Industrial Revolution and Modern Economic Growth (Allen, 2006 working paper)",
      "https://www.nuffield.ox.ac.uk/users/allen/unpublished/econinvent-3.pdf"),  # pdf 19,591w ~85m
     ("AI Monotheism vs AI Polytheism",
      "https://www.beren.io/2026-01-07-AI-Monotheism-vs-AI-Polytheism/"),  # html 6,366w ~28m
