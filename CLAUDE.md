@@ -289,6 +289,28 @@ run) → review → `--apply`.
 
 ## Gotchas / learnings (append as you discover them)
 
+- **🔥 R2 CACHE CORRUPTION — the self-perpetuating button failure (2026-07-25).** Symptom:
+  press "Sort readables" → nothing happens; `/logs` shows ONE line,
+  `sqlite3.DatabaseError: database disk image is malformed` at `Cache(config.CACHE_DB)` in
+  `phase2._build_and_run`. The R2 `state/cache.sqlite3` was **truncated by exactly one
+  4096-byte page** (header claimed 6727 pages, file held 6726 — check with
+  `struct.unpack('>I', header[28:32])` vs `os.path.getsize`).
+  - **Why it could never self-heal:** `run_named`'s `finally: push_cache_to_r2()` runs even
+    when the run died *opening* the cache — so every press pulled the corrupt db, crashed, and
+    **re-uploaded it**. The R2 object's Last-Modified tracked each failed press. Re-pressing
+    made it permanent, not better.
+  - **Root cause:** push uploaded the **live** db file while the pipeline's `Cache` connection
+    was still open, so it could capture a torn snapshot (committed page not yet flushed).
+  - **Fixed:** `push_cache_to_r2` now uploads a **consistent snapshot** (sqlite backup API —
+    safe with an open writer) and **refuses to push a db failing `PRAGMA quick_check`**;
+    `pull_cache_from_r2` **quarantines** a malformed download (`.corrupt-<ts>`) and returns
+    False so the run starts on an empty cache instead of crashing. Regression tests reproduce
+    the exact one-page truncation: `tests/test_cache_r2_integrity.py`.
+  - **Recovery recipe (worked, near-zero loss):** download the object, `sqlite3 bad.db
+    ".recover" | sqlite3 good.db`, `PRAGMA integrity_check`, compare row counts against the
+    Mac's `outputs/cache.sqlite3`, then re-upload. Recovered 884 extracted / 4954 pairwise /
+    51 audio — a *superset* of the local copy. The corrupt original is preserved in R2 at
+    `state/cache.sqlite3.corrupt-20260725`.
 - **DEPLOYED 2026-07-25:** image `f9126276` → **`1cf5e096`** (app version 15 → 16), carrying the
   5-family migration below. `CF_BUILD_MARKER=models-5family-20260725a`. Cloudflare secret
   `ANTHROPIC_API_KEY` was also repointed at a project-scoped key (the old shared key was

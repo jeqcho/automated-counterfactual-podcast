@@ -6,12 +6,15 @@ lookup, so get(a,b) and get(b,a) agree.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
 
 from .models import AudioAsset, CardFeatures, ExtractedContent, PairwiseResult
+
+log = logging.getLogger(__name__)
 
 # Where the SQLite cache lives in R2 (cloud: containers scale to zero & lose disk,
 # so we pull it on start and push it after each run).
@@ -132,8 +135,55 @@ class Cache:
 
 
 # --- R2 durability (cloud: containers scale to zero & lose local disk) -----------
+#
+# ⚠️ 2026-07-25: the R2 cache was found TRUNCATED BY EXACTLY ONE 4096-BYTE PAGE — the header
+# claimed 6727 pages, the file held 6726 — so every run died on `sqlite3.DatabaseError:
+# database disk image is malformed` the moment it opened the cache. Two bugs combined:
+#   1. push uploaded the LIVE db file while a Cache connection was still open, so it could
+#      capture a torn snapshot (a committed page not yet flushed to the main db file).
+#   2. the caller's `finally: push_cache_to_r2()` then re-uploaded that corrupt file after
+#      the crash — so each button press pulled corruption, died, and pushed it back. A
+#      self-perpetuating loop no amount of re-pressing could escape.
+# Fixes below: push a CONSISTENT snapshot via the sqlite backup API (safe with readers/writers
+# attached) and never push or accept a db that fails an integrity check.
+def _sqlite_ok(path: str) -> bool:
+    """True if `path` is a readable, structurally sound SQLite db."""
+    try:
+        con = sqlite3.connect(path)
+        try:
+            return con.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        finally:
+            con.close()
+    except Exception:
+        return False
+
+
+def _consistent_snapshot(src: str, dst: str) -> bool:
+    """Copy `src` -> `dst` via the sqlite backup API.
+
+    Unlike a filesystem copy this takes a read lock and walks pages through sqlite itself,
+    so the result is transactionally consistent even while another connection is writing —
+    which is exactly the case here (the pipeline's Cache is still open when we push)."""
+    try:
+        con = sqlite3.connect(src)
+        try:
+            out = sqlite3.connect(dst)
+            try:
+                con.backup(out)
+            finally:
+                out.close()
+        finally:
+            con.close()
+        return True
+    except Exception:
+        return False
+
+
 def pull_cache_from_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
-    """Download the cache DB from R2 before a run (no-op if R2 unconfigured or absent)."""
+    """Download the cache DB from R2 before a run (no-op if R2 unconfigured or absent).
+
+    A corrupt download is QUARANTINED rather than handed to the pipeline: the run then
+    starts from an empty cache (slow but correct) instead of crashing on open."""
     from . import config
     from .r2 import r2_client, r2_configured
     if not r2_configured():
@@ -142,13 +192,25 @@ def pull_cache_from_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
     Path(p).parent.mkdir(parents=True, exist_ok=True)
     try:
         r2_client().download_file(config.R2_BUCKET, key, p)
-        return True
     except Exception:
         return False  # first run: no cache in R2 yet
+    if not _sqlite_ok(p):
+        quarantine = f"{p}.corrupt-{int(time.time())}"
+        try:
+            os.replace(p, quarantine)
+        except OSError:
+            pass
+        log.error("cache pulled from R2 is MALFORMED — quarantined to %s; starting with an "
+                  "empty cache. The R2 copy still needs repair (sqlite3 .recover).", quarantine)
+        return False
+    return True
 
 
 def push_cache_to_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
-    """Upload the cache DB to R2 after a run (preserves digests/comparisons/audio rows)."""
+    """Upload the cache DB to R2 after a run (preserves digests/comparisons/audio rows).
+
+    Uploads a consistent snapshot, and REFUSES to publish a db that fails an integrity
+    check — otherwise a crashed run overwrites good state in R2 with its own corruption."""
     from . import config
     from .r2 import r2_client, r2_configured
     if not r2_configured():
@@ -156,8 +218,21 @@ def push_cache_to_r2(path=None, key: str = R2_CACHE_KEY) -> bool:
     p = str(path or config.CACHE_DB)
     if not os.path.exists(p):
         return False
+    if not _sqlite_ok(p):
+        log.error("refusing to push cache to R2: local db %s is malformed (this would "
+                  "overwrite the good copy in R2 with corruption)", p)
+        return False
+    snap = f"{p}.snapshot"
     try:
-        r2_client().upload_file(p, config.R2_BUCKET, key)
+        if not _consistent_snapshot(p, snap) or not _sqlite_ok(snap):
+            log.error("refusing to push cache to R2: could not take a consistent snapshot")
+            return False
+        r2_client().upload_file(snap, config.R2_BUCKET, key)
         return True
     except Exception:
         return False
+    finally:
+        try:
+            os.remove(snap)
+        except OSError:
+            pass
