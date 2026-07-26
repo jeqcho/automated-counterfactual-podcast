@@ -336,7 +336,10 @@ run) → review → `--apply`.
     Mac's `outputs/cache.sqlite3`, then re-upload. Recovered 884 extracted / 4954 pairwise /
     51 audio — a *superset* of the local copy. The corrupt original is preserved in R2 at
     `state/cache.sqlite3.corrupt-20260725`.
-- **DEPLOYED 2026-07-25:** image `f9126276` → **`1cf5e096`** (app version 15 → 16), carrying the
+- **DEPLOYED 2026-07-25 (LIVE NOW): image `1cf5e096` → `55e58fa3`, app version 16 → 17**,
+  carrying the R2 cache-integrity fix (`2bf8716`). `CF_BUILD_MARKER=cache-integrity-20260725b`.
+  Verify with `wrangler containers info a03c203b-b340-4f44-b362-7e5f3e3e4f56`.
+- **DEPLOYED 2026-07-25 (earlier):** image `f9126276` → `1cf5e096` (app version 15 → 16), carrying the
   5-family migration below. `CF_BUILD_MARKER=models-5family-20260725a`. Cloudflare secret
   `ANTHROPIC_API_KEY` was also repointed at a project-scoped key (the old shared key was
   spend-capped). **`wrangler containers info` is EVENTUALLY CONSISTENT** — it reported the OLD
@@ -510,6 +513,27 @@ run) → review → `--apply`.
   stays the first tag. Fix that worked: change the Dockerfile (a unique `ENV CF_BUILD_MARKER`)
   to force a NEW image digest → wrangler must push + EDIT the app image. Verify with
   `wrangler containers info <app-id>` (check `image`, `vcpu`, `memory`).
+- **Local Docker housekeeping: delete old image TAGS, never prune the build cache (2026-07-25).**
+  Old `counterfactual-podcast-podcastcontainer:<tag>` images pile up one per deploy and look like
+  1.28GB each, but `docker system df -v` shows `SHARED 1.28GB / UNIQUE ~1MB` — they all sit on the
+  same apt-get (448MB) + `uv sync` (648MB) layers. Deleting six of them freed **~120MB**, not 7GB:
+  the layers just got re-attributed from "Images" to "Build Cache" because the buildx cache still
+  references them. That's the desired outcome — those cached layers are exactly what keeps
+  `wrangler deploy` fast. Old tags are safe to `docker rmi` (Cloudflare's registry keeps its own
+  copy, so rollback never needs the local image); keep the live tag + `moby/buildkit` (the running
+  builder). **Do NOT run `docker buildx prune -af`** (~2.9GB, but costs a full cold rebuild) or
+  Docker Desktop's **Troubleshoot → Clean/Purge Data** (nukes everything incl. the warm cache).
+- **`Docker.raw` is GROW-ONLY on Apple Virtualization — restarting Docker does NOT shrink it
+  (2026-07-25).** `ls -lh` shows 60GB (the VM's max disk, never allocated); real usage is
+  `stat -f %b × 512` ≈ 8.1GB. Measured across a full Docker Desktop restart: 8.071 → 8.070GB, i.e.
+  nothing. Went into the VM to find out why: the guest side is fine — `/dev/vda1 on /var/lib type
+  ext4 (rw,relatime,discard)` and `fstrim -av` reports **"51.6 GiB trimmed"** — but the host file
+  still doesn't move. **`fstrim`'s number is a false positive**: it measures what the guest *asked*
+  to discard, not what the hypervisor honored, and Docker Desktop's AVF virtio-blk backend accepts
+  the discards and silently drops them instead of hole-punching the APFS sparse file. So no
+  in-Docker action can ever shrink `Docker.raw`; only Purge Data (delete + recreate) will, at the
+  cost of the whole cache. Not worth it — 8.1GB holds ~5.5GB of live data (images + build cache +
+  the 2.9GB buildx volume), so the actual slack is only ~2.5GB.
 - **`instance_type`: `lite` (~256MB/2GB/0.0625vcpu) is too small** — OOM/disk + painfully slow.
   Use `standard-1` (renamed from `standard`; ~4GB/8GB/0.5vcpu). Set in `wrangler.jsonc`.
 - **Container logs do NOT appear in `wrangler tail`** (Worker-only). Observe a run via the
