@@ -284,7 +284,8 @@ run) → review → `--apply`.
 - `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_SESSION_COOKIE`
   (the web session cookie for Inbox access — see the Inbox section), `ANTHROPIC_API_KEY`,
   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
-  `R2_PUBLIC_BASE`.
+  `R2_PUBLIC_BASE`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (folder-scoped
+  wrangler auth — see the 2026-08-16 gotcha).
 - Anthropic account = **highest tier** → concurrency 12 is safe.
 
 ## Conventions & working agreements
@@ -496,6 +497,20 @@ run) → review → `--apply`.
   multipart POST (image bytes + `setCover=true`); a URL-only attachment can't be a cover.
 
 ### Cloud-deploy findings (2026-06-14 night) — hard-won, read before touching the deploy
+- **⚠️ Wrangler auth is FOLDER-SCOPED here via `.env` (2026-08-16) — the global OAuth login
+  no longer works for this project.** Jay's machine-wide `wrangler login` now belongs to
+  **jay@robocurve.org** (his YC company), whose "Domain Administrator" role on the
+  chooijqweb account can NOT write Worker secrets/scripts → `Authentication error [code:
+  10000]` on `wrangler secret put` / `wrangler deploy`. Fix in place: `.env` carries a
+  **scoped API token** (`CLOUDFLARE_API_TOKEN`, created BY the chooijqweb@gmail.com user —
+  tokens are capped at their creator's role, so one minted by the robocurve user wouldn't
+  help — "Edit Cloudflare Workers" template + Containers/Cloudchamber Edit for deploys) plus
+  `CLOUDFLARE_ACCOUNT_ID`. Wrangler v4 reads both from the project `.env` automatically and
+  the token takes precedence over the global OAuth, so every wrangler command run from this
+  folder is chooijqweb, everywhere else stays robocurve. Verify with `npx wrangler whoami`
+  (should say "User API Token … chooijqweb@gmail.com", one account). If the token is ever
+  revoked, recreate it as the chooijqweb user — do NOT `wrangler logout/login`, that flips
+  the machine-wide auth Robocurve work depends on.
 - **Container env is NOT inherited from the Worker.** `@cloudflare/containers` `Container`
   defaults `envVars = {}`. You MUST forward secrets explicitly in the subclass constructor
   (FORWARD_ENV whitelist in `worker/index.js`) or the FastAPI app boots with no creds.
