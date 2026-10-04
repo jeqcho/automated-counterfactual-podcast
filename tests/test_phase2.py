@@ -221,3 +221,29 @@ async def test_merge_newcomers_is_logarithmic_not_linear():
     # landed in the middle, not the top/bottom
     idx = next(i for i, f in enumerate(ordered) if f.card_id == "nX")
     assert 200 < idx < 320 or 240 < idx < 260   # roughly where p500 belongs (~250)
+
+
+async def test_merge_newcomers_only_compares_newcomers_sharing_a_slot():
+    # Many newcomers in distinct slots: k binary searches and NO newcomer-vs-newcomer sort
+    # (the old up-front merge_sort was a long serial chain). Same-slot ones still get ordered.
+    from counterfactual_podcast.pipelines.phase2 import _merge_newcomers
+
+    pairs = []
+
+    class Cmp:
+        async def acompare(self, a, b):
+            pairs.append((a.card_id, b.card_id))
+            return a if int(a.title[1:]) >= int(b.title[1:]) else b
+
+    existing = [CardFeatures(f"e{i}", f"p{1000 - 10 * i}", 5, "d", "html", True)
+                for i in range(64)]                                # p1000, p990, ... p370
+    spread = [CardFeatures(f"s{v}", f"p{v}", 5, "d", "html", True) for v in (995, 805, 505)]
+    same = [CardFeatures(f"t{v}", f"p{v}", 5, "d", "html", True) for v in (702, 708, 705)]
+    ordered = await _merge_newcomers(existing, spread + same, Cmp().acompare)
+
+    titles = [int(f.title[1:]) for f in ordered]
+    assert titles == sorted(titles, reverse=True)                  # fully correct order
+    newcomer_ids = {f.card_id for f in spread + same}
+    nn = [p for p in pairs if p[0] in newcomer_ids and p[1] in newcomer_ids]
+    assert nn and all(a.startswith("t") and b.startswith("t") for a, b in nn)
+    assert len(pairs) <= 6 * 7 + 3                                 # ~log2(64) each + tiny sort

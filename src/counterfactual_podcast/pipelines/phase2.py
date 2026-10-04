@@ -23,17 +23,25 @@ from .weekly import _insertion_pos  # shared fractional-position helper
 async def _merge_newcomers(existing_feats, newcomers, acompare) -> list:
     """Insert a few `newcomers` into a big already-sorted `existing_feats` and return the full
     priority order. Each newcomer is BINARY-searched into `existing` (O(log n)), and the
-    searches run CONCURRENTLY (independent against the fixed snapshot). Same-slot newcomers are
-    ordered by first sorting the newcomers among themselves (`merge_sort`), so a batch of
-    same-list cards keeps correct relative order. Avoids the O(n) linear merge_presorted scan."""
+    searches run CONCURRENTLY (independent against the fixed snapshot). Only newcomers that land
+    in the SAME slot are then compared among themselves (`merge_sort` per slot, slots
+    concurrent). Avoids the O(n) linear merge_presorted scan.
+
+    Latency, not call count, is the cost here: comparisons inside one merge/search are serial.
+    Merge-sorting ALL newcomers up front (the old tiebreak) was a ~30-call serial chain for 17
+    cards — most of a 2m19s ranking step (2026-10-04) — to order cards that almost never share
+    a slot. Now the critical path is one binary search (~log2 n) plus a tiny per-slot sort."""
     if not newcomers:
         return list(existing_feats)
-    sorted_new = await merge_sort(newcomers, acompare)          # tiebreak order for same slot
     idxs = await asyncio.gather(                                # parallel binary searches
-        *[insert_index(f, existing_feats, acompare) for f in sorted_new])
+        *[insert_index(f, existing_feats, acompare) for f in newcomers])
     at = defaultdict(list)
-    for f, idx in zip(sorted_new, idxs):
-        at[idx].append(f)                                       # sorted_new order preserved
+    for f, idx in zip(newcomers, idxs):
+        at[idx].append(f)
+    crowded = [i for i, group in at.items() if len(group) > 1]
+    if crowded:                                                 # order same-slot newcomers
+        sorted_groups = await asyncio.gather(*[merge_sort(at[i], acompare) for i in crowded])
+        at.update(zip(crowded, sorted_groups))
     ordered = []
     for i in range(len(existing_feats) + 1):
         ordered.extend(at.get(i, []))
