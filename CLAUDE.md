@@ -528,6 +528,11 @@ run) → review → `--apply`.
   stays the first tag. Fix that worked: change the Dockerfile (a unique `ENV CF_BUILD_MARKER`)
   to force a NEW image digest → wrangler must push + EDIT the app image. Verify with
   `wrangler containers info <app-id>` (check `image`, `vcpu`, `memory`).
+- **`unauthorized` at the end of `wrangler deploy` on a slow network = expired push credential,
+  NOT bad auth (2026-10-04).** On mobile data one big image layer kept `Retrying in N
+  seconds`; the registry credential wrangler mints for the push is short-lived, so the push
+  eventually died with a bare `unauthorized`. Re-run the deploy on a good connection (layers
+  that already went up show `Layer already exists`). Don't touch the wrangler/Cloudflare tokens.
 - **Local Docker housekeeping: delete old image TAGS, never prune the build cache (2026-07-25).**
   Old `counterfactual-podcast-podcastcontainer:<tag>` images pile up one per deploy and look like
   1.28GB each, but `docker system df -v` shows `SHARED 1.28GB / UNIQUE ~1MB` — they all sit on the
