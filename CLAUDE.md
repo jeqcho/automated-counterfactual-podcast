@@ -324,10 +324,13 @@ run) → review → `--apply`.
   og:title — or, if the page blocks us, a slug title (`"Ai Tax Proposals — nytimes.com"`,
   trailing hex ids stripped, `"ft.com article"` for id-only URLs). It also titles plain
   bare-URL cards when a title is found. `_best_attachment_url` prefers non-tracker
-  attachments, so the unwrapped URL wins over the original tracker attachment. Backfill for
+  attachments, and `find_url` returns the real attachment when the first URL in name/desc is
+  a tracker (renamed cards often still carry the tracker in their desc). Backfill for
   older cards: `scripts/fix_tracker_cards.py` (ran 2026-10-04: 37 cards; undo manifest
-  `outputs/tracker_card_fixes.json`). Cards ranked before the fix were ranked on a failed
-  tracker extraction, and renaming doesn't re-rank them.
+  `outputs/tracker_card_fixes.json`). Renaming doesn't re-rank; re-rank named cards with
+  `scripts/recover_and_resort.py --list <l> --ids-from <manifest> --apply`, which also purges
+  their stale pairwise rows. Most newsletter links are paywalled (NYT/WSJ/Bloomberg/FT/
+  Reuters/Axios — 21 of 25 in System 1), so they stay unreadable and out of the podcast.
 
 - **🔥 R2 CACHE CORRUPTION — the self-perpetuating button failure (2026-07-25).** Symptom:
   press "Sort readables" → nothing happens; `/logs` shows ONE line,
