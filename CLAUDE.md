@@ -647,15 +647,18 @@ run) → review → `--apply`.
   cleaned-up cards mostly landed in System 2 (deep read, excluded from the queue), which is the
   classifier's call, not a bug. The root-cause kills are themselves now rare (checkpointing +
   concurrency cap + Trello/Anthropic timeouts).
-- **Phases are MUTUALLY EXCLUSIVE — the trigger refuses to start one while the other runs
-  (2026-06-28).** Both phases pull the same R2 `state/cache.sqlite3` into the same local path
-  at start and push it back at finish, so running them concurrently races on that file (SQLite
-  corruption / clobbered work). `server.start_run` is now a GLOBAL mutex: if anything is in
-  flight it returns `(False, message)` and the endpoint replies **HTTP 409** with a friendly
-  "wait until 'X' finishes" message (labels: phase1="Extract readables", phase2="Sort
-  readables"). So pressing button 1 while button 2 runs (or vice versa) safely fails with a
-  warning instead of corrupting the cache. (In-process flags + `threading.Lock`; correct
-  because `max_instances:1` = one container/process.)
+- **Phases are MUTUALLY EXCLUSIVE — a press during the other phase is QUEUED (2026-10-04).**
+  Both phases pull the same R2 `state/cache.sqlite3` into the same local path at start and
+  push it back at finish, so running them concurrently races on that file (SQLite corruption /
+  clobbered work). `server.start_run` is a GLOBAL mutex. It used to reply **HTTP 409** to a
+  press during the other phase — but **Butler never shows the HTTP response**, so pressing
+  "Extract readables" then "Sort readables" right after silently dropped the Sort (Jay saw
+  "nothing happened", 2026-10-04). Now the other phase goes into a one-slot `_queued` and the
+  same worker thread starts it the moment the first run has pushed its cache (hand-off under
+  the lock, so nothing can slip in between). Re-pressing a phase that's already running or
+  queued is a no-op 409. `/health` and `/logs` report `queued`. The queue lives in memory, so
+  a container restart mid-run drops it. (`threading.Lock` is correct because
+  `max_instances:1` = one container/process.)
 - **Cache is keyed by card identity only** (`extracted`/`digest`/`audio` PK `card_id`,
   `pairwise` PK `(a_id,b_id)`) — NO list/pos column. So moving cards between lists between
   Phase 1 and Phase 2 never stales the cache; list membership/order is read LIVE from Trello.

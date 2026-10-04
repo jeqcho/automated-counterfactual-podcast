@@ -38,6 +38,10 @@ enable_ring_capture()
 # (not asyncio.Lock) guards the in-flight flags.
 _state_lock = threading.Lock()
 _running = {"phase1": False, "phase2": False}
+# A phase pressed while the OTHER phase is in flight waits here and starts the moment the
+# current run finishes. Butler never shows the HTTP response to Jay, so a 409 was invisible:
+# pressing "Extract" then "Sort" right after silently dropped the Sort (2026-10-04).
+_queued: str | None = None
 
 
 async def _default_phase1():
@@ -82,39 +86,52 @@ _PHASE_LABELS = {"phase1": "Extract readables", "phase2": "Sort readables"}
 
 def start_run(name: str) -> tuple[bool, str]:
     """Start ``run_named(name)`` in a daemon thread with its own event loop so the FastAPI
-    request loop stays responsive.
+    request loop stays responsive — or QUEUE it if the other phase is in flight.
 
-    GLOBAL mutex (not per-phase): a phase will NOT start while ANY phase is already in
-    flight. Both phases pull the SAME R2 cache file (``state/cache.sqlite3``) into the same
-    local path at start and push it back at finish — running two at once races on that file
-    and can corrupt the cache or clobber the other run's work. So if anything is running, we
-    refuse and tell the caller to wait.
+    GLOBAL mutex (not per-phase): two phases never run at once. Both pull the SAME R2 cache
+    file (``state/cache.sqlite3``) into the same local path at start and push it back at
+    finish — running both at once races on that file and can corrupt the cache. So a press
+    for the other phase is queued (one slot) and runs right after, in the same worker thread,
+    once the first run has pushed its cache. Pressing a phase that's already running or
+    already queued is a harmless no-op.
 
-    Returns ``(started, message)``."""
+    Returns ``(accepted, message)`` — False only for those no-op re-presses."""
+    global _queued
     with _state_lock:
         busy = next((p for p, on in _running.items() if on), None)
+        this_label = _PHASE_LABELS.get(name, name)
+        if busy == name:
+            return False, (f"'{this_label}' is already running — no need to press again.")
+        if _queued == name:
+            return False, (f"'{this_label}' is already queued — it starts when the current "
+                           f"run finishes.")
         if busy is not None:
+            _queued = name
             busy_label = _PHASE_LABELS.get(busy, busy)
-            if busy == name:
-                return False, (f"'{busy_label}' is already running — please wait for it to "
-                               f"finish before pressing again.")
-            this_label = _PHASE_LABELS.get(name, name)
-            return False, (
-                f"Can't start '{this_label}': '{busy_label}' is still running. They share one "
-                f"cache, so running both at once could corrupt it. Please wait until "
-                f"'{busy_label}' finishes, then try again.")
+            log.info("%s queued: waiting for '%s' to finish", name, busy_label)
+            return True, (f"{name} queued — '{this_label}' starts automatically when "
+                          f"'{busy_label}' finishes.")
         _running[name] = True
 
-    def worker() -> None:
-        try:
-            asyncio.run(run_named(name))
-        except Exception:  # noqa: BLE001 — a crashed pipeline must not wedge the flag
-            log.exception("pipeline %s crashed", name)
-        finally:
-            with _state_lock:
-                _running[name] = False
+    def worker(current: str) -> None:
+        global _queued
+        while current is not None:
+            try:
+                asyncio.run(run_named(current))
+            except Exception:  # noqa: BLE001 — a crashed pipeline must not wedge the flag
+                log.exception("pipeline %s crashed", current)
+            finally:
+                # Hand off under the lock so no press can slip a parallel run into the gap.
+                with _state_lock:
+                    _running[current] = False
+                    current, _queued = _queued, None
+                    if current is not None:
+                        _running[current] = True
+            if current is not None:
+                log.info("starting queued %s", current)
 
-    threading.Thread(target=worker, name=f"pipeline-{name}", daemon=True).start()
+    threading.Thread(target=worker, args=(name,), name=f"pipeline-{name}",
+                     daemon=True).start()
     return True, f"{name} started"
 
 
@@ -123,9 +140,14 @@ def _running_snapshot() -> dict:
         return dict(_running)
 
 
+def _queued_snapshot() -> str | None:
+    with _state_lock:
+        return _queued
+
+
 @app.get("/health")
 async def health():
-    return {"ok": True, "running": _running_snapshot()}
+    return {"ok": True, "running": _running_snapshot(), "queued": _queued_snapshot()}
 
 
 @app.get("/logs")
@@ -134,7 +156,8 @@ async def logs(n: int = 200, x_trigger_token: str | None = Header(default=None))
     since Cloudflare doesn't pipe container stdout into `wrangler tail`."""
     _check_token(x_trigger_token)
     n = max(1, min(int(n), 1000))
-    return {"running": _running_snapshot(), "lines": recent_logs(n)}
+    return {"running": _running_snapshot(), "queued": _queued_snapshot(),
+            "lines": recent_logs(n)}
 
 
 @app.post("/phase1")
@@ -142,7 +165,7 @@ async def phase1(x_trigger_token: str | None = Header(default=None)):
     _check_token(x_trigger_token)
     started, message = start_run("phase1")
     if not started:
-        # 409 Conflict — the run is busy; the message tells Jay to wait.
+        # 409 only for a no-op re-press (same phase already running/queued).
         raise HTTPException(status_code=409, detail=message)
     return {"status": message}
 

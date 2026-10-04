@@ -91,23 +91,60 @@ def test_start_run_skips_when_same_phase_already_running():
         server._running["phase1"] = False
 
 
-def test_start_run_blocks_other_phase_while_one_runs():
-    """Cross-phase mutex: can't start phase2 while phase1 runs (shared cache)."""
+def test_health_reports_queue(client):
+    assert client.get("/health").json()["queued"] is None
+
+
+def test_start_run_queues_other_phase_while_one_runs():
+    """Cross-phase mutex: phase2 pressed during phase1 is QUEUED, not run in parallel
+    (shared cache) and not dropped (Butler never shows a 409 to Jay)."""
     server._running["phase1"] = True
     try:
         started, msg = server.start_run("phase2")
-        assert started is False
+        assert started is True and "queued" in msg
         assert "Sort readables" in msg and "Extract readables" in msg
-        assert server._running["phase2"] is False   # must NOT have flipped on
+        assert server._running["phase2"] is False   # must NOT run alongside phase1
+        assert server._queued == "phase2"
+        again, msg2 = server.start_run("phase2")    # re-press while queued = no-op
+        assert again is False and "already queued" in msg2
     finally:
         server._running["phase1"] = False
+        server._queued = None
 
 
-def test_phase2_endpoint_returns_409_when_phase1_running(client):
+def test_phase2_endpoint_queues_when_phase1_running(client):
     server._running["phase1"] = True
     try:
         r = client.post("/phase2", headers={"X-Trigger-Token": "secret123"})
-        assert r.status_code == 409
-        assert "still running" in r.json()["detail"]
+        assert r.status_code == 200 and "queued" in r.json()["status"]
+        assert client.get("/health").json()["queued"] == "phase2"
     finally:
         server._running["phase1"] = False
+        server._queued = None
+
+
+def test_queued_phase_runs_after_current_finishes(client, monkeypatch, no_r2_sync):
+    """Press Extract, then Sort while Extract runs: Sort starts right after, never overlapping."""
+    import threading
+    order, release = [], threading.Event()
+
+    async def fake1():
+        order.append("phase1-start")
+        release.wait(3)
+        order.append("phase1-end")
+
+    async def fake2():
+        order.append("phase2")
+    monkeypatch.setitem(server.RUNNERS, "phase1", fake1)
+    monkeypatch.setitem(server.RUNNERS, "phase2", fake2)
+    h = {"X-Trigger-Token": "secret123"}
+    assert client.post("/phase1", headers=h).status_code == 200
+    r = client.post("/phase2", headers=h)
+    assert r.status_code == 200 and "queued" in r.json()["status"]
+    release.set()
+    deadline = time.time() + 3
+    while (server._running["phase1"] or server._running["phase2"] or server._queued
+           or "phase2" not in order) and time.time() < deadline:
+        time.sleep(0.02)
+    assert order == ["phase1-start", "phase1-end", "phase2"]
+    assert server._queued is None and not any(server._running.values())
