@@ -542,6 +542,13 @@ run) → review → `--apply`.
   stays the first tag. Fix that worked: change the Dockerfile (a unique `ENV CF_BUILD_MARKER`)
   to force a NEW image digest → wrangler must push + EDIT the app image. Verify with
   `wrangler containers info <app-id>` (check `image`, `vcpu`, `memory`).
+- **A rollout DOES kill an in-flight run — never deploy while `/health` shows a phase running
+  (2026-10-04).** Contrary to the "won't roll onto a live singleton" note above (which was about
+  the image silently not changing), a forced-new-digest deploy finished at 16:10 UTC and the
+  container was swapped at 16:14 (`updated_at`), killing a Listen Queue top-up mid-synthesis:
+  0 cards moved, ring buffer gone. The swap lags `wrangler deploy` by a few minutes, so check
+  `/health` is idle first, and confirm afterwards with `wrangler containers info` (the
+  `image` tag changes once the rollout lands).
 - **`unauthorized` at the end of `wrangler deploy` on a slow network = expired push credential,
   NOT bad auth (2026-10-04).** On mobile data one big image layer kept `Retrying in N
   seconds`; the registry credential wrangler mints for the push is short-lived, so the push
