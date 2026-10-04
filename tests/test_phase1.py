@@ -5,6 +5,20 @@ from counterfactual_podcast.models import Card
 from counterfactual_podcast.pipelines.phase1 import run_phase1
 
 
+@pytest.fixture(autouse=True)
+def no_link_titling(monkeypatch):
+    """Phase 1 titles moved bare-URL cards over the network — stub it (tested separately in
+    test_link_titles.py). Records which cards it was handed."""
+    import counterfactual_podcast.link_titles as lt
+    seen = []
+
+    def fake(client, cards, *, apply=False, log=None, **kw):
+        seen.extend(c.id for c in cards)
+        return [{"card_id": c.id, "applied": apply} for c in cards]
+    monkeypatch.setattr(lt, "tidy_cards", fake)
+    return seen
+
+
 class FakeClient:
     def __init__(self, inbox):
         self._inbox = inbox
@@ -108,3 +122,14 @@ async def test_phase1_alert_card_is_idempotent():
     client = DeadCookieWithAlert([])
     await run_phase1(client, apply=True)
     assert getattr(client, "created", []) == []   # no duplicate alert
+
+
+async def test_phase1_titles_only_moved_cards(no_link_titling):
+    inbox = [Card("r1", "https://x.org/a"), Card("n1", "note, no link")]
+    res = await run_phase1(FakeClient(inbox), apply=True)
+    assert no_link_titling == ["r1"] and res["titled"] == 1
+
+
+async def test_phase1_dry_run_titles_nothing(no_link_titling):
+    await run_phase1(FakeClient([Card("r1", "https://x.org/a")]), apply=False)
+    assert no_link_titling == []

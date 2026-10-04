@@ -315,6 +315,20 @@ run) → review → `--apply`.
 
 ## Gotchas / learnings (append as you discover them)
 
+- **Newsletter links are Mailchimp click-trackers — unwrapped + titled in Phase 1
+  (2026-10-04).** Cards from newsletters arrive named `https://us.list-manage.com/<id>?e=…`
+  (or `<org>.usN.list-manage.com/track/click?…`): unreadable on the board, and fetching them
+  403s (the redirect lands on paywalls like NYT), so extraction/dedup saw only the tracker.
+  `link_titles.tidy_cards` (run by Phase 1 on every card it moves) reads the tracker's 302
+  `Location` **without following it**, attaches the real URL, then renames the card to
+  og:title — or, if the page blocks us, a slug title (`"Ai Tax Proposals — nytimes.com"`,
+  trailing hex ids stripped, `"ft.com article"` for id-only URLs). It also titles plain
+  bare-URL cards when a title is found. `_best_attachment_url` prefers non-tracker
+  attachments, so the unwrapped URL wins over the original tracker attachment. Backfill for
+  older cards: `scripts/fix_tracker_cards.py` (ran 2026-10-04: 37 cards; undo manifest
+  `outputs/tracker_card_fixes.json`). Cards ranked before the fix were ranked on a failed
+  tracker extraction, and renaming doesn't re-rank them.
+
 - **🔥 R2 CACHE CORRUPTION — the self-perpetuating button failure (2026-07-25).** Symptom:
   press "Sort readables" → nothing happens; `/logs` shows ONE line,
   `sqlite3.DatabaseError: database disk image is malformed` at `Cache(config.CACHE_DB)` in

@@ -73,6 +73,19 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
     if log and failed:
         log.warning(f"{len(failed)} cards failed to move (left in Inbox), retry later")
 
+    # Give moved bare-URL cards a readable name (and unwrap newsletter click-trackers to the
+    # real article) so Jay can review 'To Be Processed' by title. Best-effort, never fatal.
+    titled = []
+    if apply and moved:
+        moved_ids = {m["card_id"] for m in moved}
+        try:
+            from ..link_titles import tidy_cards
+            titled = tidy_cards(client, [c for c in linked if c.id in moved_ids],
+                                apply=True, log=log)
+        except Exception as e:  # noqa: BLE001
+            if log:
+                log.warning(f"card titling failed: {type(e).__name__}: {str(e)[:80]}")
+
     # If the session cookie is dead, drop a VISIBLE alert card on the board so Jay notices
     # (a /logs line he'd never check isn't enough). Idempotent — one alert, not one per press.
     if inbox_error and apply:
@@ -98,7 +111,8 @@ async def run_phase1(client, *, apply: bool = False, log=None) -> dict:
     return {"inbox": len(cards), "with_links": len(linked), "no_link_kept": len(no_link),
             "moved_to_review": len(moved), "failed": len(failed),
             "deduped": dedup["archived"], "moved": moved, "failed_cards": failed,
-            "dedup": dedup, "inbox_error": inbox_error, "applied": apply}
+            "dedup": dedup, "inbox_error": inbox_error, "applied": apply,
+            "titled": sum(1 for t in titled if t.get("applied"))}
 
 
 async def _build_and_run(apply: bool, log=None) -> dict:
