@@ -112,3 +112,22 @@ def test_mojibake_title_is_repaired():
     bad = "Here\u2019s Exactly".encode("utf-8").decode("latin-1")
     p = plan_card(Card("c1", ARS), fetch_title=lambda u: bad)
     assert p["title"] == "Here\u2019s Exactly"
+
+
+def test_slug_fallback_keeps_years_and_drops_trailing_dates():
+    reuters = ("https://www.reuters.com/world/china/china-amd-ceo-lisa-su-is-understated-"
+               "2026-05-29/")
+    fast = "https://www.fastcompany.com/91502632/google-most-innovative-companies-2026"
+    for url, want in [(reuters, "China Amd Ceo Lisa Su Is Understated — reuters.com"),
+                      (fast, "Google Most Innovative Companies — fastcompany.com")]:
+        p = plan_card(Card("c1", TRACKER, url=TRACKER),
+                      get=fake_get({TRACKER: Resp(302, url)}), fetch_title=lambda u: None)
+        assert p["title"] == want
+
+
+def test_find_url_prefers_unwrapped_attachment_over_tracker_in_desc():
+    from counterfactual_podcast.extract import find_url
+    card = Card("c1", "A real title", desc=f"old link {TRACKER}", url=ARS)
+    assert find_url(card) == ARS
+    assert find_url(Card("c2", "t", desc=f"x {TRACKER}", url=TRACKER)) == TRACKER
+    assert find_url(Card("c3", "t", desc=f"x {NYT}", url=ARS)) == NYT    # non-tracker: unchanged

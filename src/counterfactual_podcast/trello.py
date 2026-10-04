@@ -196,7 +196,7 @@ class TrelloClient:
         Prefer the first external http(s) attachment that isn't a newsletter click-tracker
         (link_titles attaches the unwrapped article URL alongside the tracker); fall back to
         any external, then any http one."""
-        from .link_titles import is_tracker
+        from .extract import is_tracker
         https = [a.get("url") for a in (attachments or [])
                  if (a.get("url") or "").startswith("http")]
         external = [u for u in https if "trello.com" not in u]

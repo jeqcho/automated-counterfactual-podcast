@@ -28,20 +28,20 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
-from .extract import _HTTP_HEADERS, find_url
+from .extract import _HTTP_HEADERS, find_url, is_tracker  # noqa: F401 (re-export)
 from .titles import humanize_url, source_domain
 
 _BARE_URL = re.compile(r"^https?://\S+$")
-# Click-tracking redirectors whose URL says nothing about the article.
-TRACKER_HOST_SUFFIXES = ("list-manage.com",)
-# Hex id tokens news sites append to slugs ("…-ai-fund-4dbb00a4", FT's uuid paths).
-_HEX_ID = re.compile(r"^(?=[0-9a-f]*\d)[0-9a-f]{4,}$", re.IGNORECASE)
+# Hex id tokens news sites append to slugs ("…-ai-fund-4dbb00a4", FT's uuid paths): hex
+# with BOTH a digit and a letter, so years like "2026" don't count.
+_HEX_ID = re.compile(r"^(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{4,}$", re.IGNORECASE)
 
 
 def _slug_title(url: str) -> str:
-    """URL-slug title with trailing hex id tokens dropped; '' if nothing readable is left."""
+    """URL-slug title with trailing hex ids / date numbers dropped; '' if nothing readable
+    is left."""
     words = humanize_url(url).split()
-    while words and _HEX_ID.match(words[-1]):
+    while words and (_HEX_ID.match(words[-1]) or words[-1].isdigit()):
         words.pop()
     if any(_HEX_ID.match(w) for w in words):     # an id-only path (FT uuids): unreadable
         return ""
@@ -57,14 +57,6 @@ def _fix_mojibake(title: str) -> str:
         return title.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
         return title
-
-
-def is_tracker(url: str | None) -> bool:
-    try:
-        host = (urlparse(url or "").hostname or "").lower()
-    except ValueError:
-        return False
-    return any(host == s or host.endswith("." + s) for s in TRACKER_HOST_SUFFIXES)
 
 
 def is_bare_url(name: str | None) -> bool:

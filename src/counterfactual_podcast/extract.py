@@ -57,14 +57,33 @@ def est_minutes(word_count: int) -> int:
     return round(word_count / config.WPM_READING)
 
 
+# Newsletter click-tracking redirectors whose URL says nothing about the article (see
+# link_titles, which unwraps them and attaches the real URL).
+TRACKER_HOST_SUFFIXES = ("list-manage.com",)
+
+
+def is_tracker(url: str | None) -> bool:
+    try:
+        host = (urlparse(url or "").hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == s or host.endswith("." + s) for s in TRACKER_HOST_SUFFIXES)
+
+
 def find_url(card: Card) -> Optional[str]:
-    """First http(s) URL found in card.name, else in card.desc, else None."""
+    """First http(s) URL found in card.name, else in card.desc, else None.
+
+    A click-tracker URL loses to a real (non-tracker) attachment: once link_titles has
+    unwrapped a tracker card, the tracker can still sit in the desc, and must not win."""
     for blob in (card.name, card.desc):
         if not blob:
             continue
         m = _URL_RE.search(blob)
         if m:
-            return m.group(0).rstrip(".,);]")
+            found = m.group(0).rstrip(".,);]")
+            if is_tracker(found) and card.url and not is_tracker(card.url):
+                return card.url
+            return found
     return None
 
 
