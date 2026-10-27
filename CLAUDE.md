@@ -112,6 +112,15 @@ episode only leaves the feed when its card leaves `Listen Queue` AND Phase 2 rep
 System1+LifeOptim, so an archived card is both out of the feed and won't be re-queued — zero
 code needed. MP3s persist in R2 (orphaned, harmless), so a feed could be rebuilt later.
 
+## Ad-hoc episodes (2026-10-27) — `scripts/publish_adhoc_episodes.py`
+Reads arbitrary text files (line 1 = title) aloud as feed episodes with no source link
+(first use: 15 YC Post Batch Manual chapters, ~3h, for a drive). Each becomes a real
+Listen Queue card placed above every existing card, with cache rows seeded for it
+(extracted kind=text, note=adhoc; digest = first 800 chars; audio) and its MP3 at
+`{prefix}/{card_id}.mp3`. They survive Phase 2 because `ensure_listen_queue` keeps the
+existing queue's order and only merges newcomers in. Archive a card to drop its episode.
+`--audio-dir` reuses MP3s that are already synthesized.
+
 ## Earlier (2026-06-02 → 03) — see `reports/MORNING-HANDOFF.md`
 Two-phase intake live (Phase 1 button works); System 1/2/Life-Optim sorted in place
 (before-copies on board); a ~3h Kokoro listen queue + podcast feed built overnight; Google
