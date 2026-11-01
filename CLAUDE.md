@@ -286,7 +286,10 @@ run) → review → `--apply`.
     2026-07-12: button 1 read 74 inbox cards, moved 15 links, dedup'd. **Security:** the session
     cookie is a FULL-ACCOUNT credential (more powerful than the scoped API token) — never commit
     it, never log it, compare by length/last-6 only.
-  - WRITING INTO the Inbox (move-in / create-in) is still not attempted — capture happens via
+  - **Creating cards IN the Inbox works via the cookie (verified 2026-10-31):**
+    `_web_request('POST','/cards', data={'idList': inbox_list_id(), 'name': title, 'pos': 'top',
+    'urlSource': url})` — URL lands as an attachment, matching the board convention.
+  - (Older note) WRITING INTO the Inbox (move-in / create-in) was not attempted — capture happens via
     Trello's own integrations (mobile share, email-to-inbox, etc.); we only read + move OUT.
 - Listen queue tops up from **System 1 + Life Optim only** (System 2 excluded — needs
   focused reading). 20h is a **soft floor** (capped by extractable-content yield).
