@@ -356,3 +356,33 @@ async def test_make_reinsert_excludes_leaving_cards_from_rank():
     await make_reinsert(client, cache, Enricher(prio), None, Comparator())(
         client.get_cards(Q), exclude={"leaving"})
     assert ("rank", "x", 1) in client.calls
+
+
+async def test_cap_shared_across_lists_does_not_starve_second_list(monkeypatch):
+    monkeypatch.setattr(config, "QUEUE_PREEMPT_MAX", 2)
+    prio = {"q1": 1, "q2": 1, "s_a": 7, "s_b": 6, "s_c": 5, "lo_top": 9}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q1", "q2"], s1=["s_a", "s_b", "s_c"], lo=["lo_top"],
+                                    prio=prio, lengths=lengths)
+    res = await run(client, cache, enr, cmp, make_synth(lengths))
+    assert res["preempted"] == ["lo_top", "s_a"]
+
+
+async def test_failed_rehome_falls_back_and_still_admits():
+    prio = {"q1": 9, "q2": 5, "n": 7}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q1", "q2"], s1=["n"], prio=prio, lengths=lengths)
+
+    async def broken(cards, exclude=()):
+        raise RuntimeError("trello down")
+    res = await run(client, cache, enr, cmp, make_synth(lengths), reinsert_fn=broken)
+    assert res["preempted"] == ["n"] and "q2" in client.ids(TBP)
+    assert set(client.ids(Q)) == {"q1", "n"}
+
+
+async def test_preempt_disabled_flag():
+    prio = {"q1": 9, "q2": 5, "n": 7}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q1", "q2"], s1=["n"], prio=prio, lengths=lengths)
+    res = await run(client, cache, enr, cmp, make_synth(lengths), preempt=False)
+    assert res["preempted"] == [] and client.ids(Q) == ["q1", "q2"]

@@ -80,12 +80,11 @@ async def _build_and_run(apply: bool, log=None) -> dict:
     synth = make_synth(cache)
 
     async def ensure_queue_fn():
-        # No checkpoint: weekly runs locally and never pulls R2, so a mid-run push could
-        # overwrite the cloud cache with a stale copy.
-        from ..routing import make_reinsert
-        return await ensure_listen_queue(
-            client, cache, enricher, comparator, synth, log=log, checkpoint=None,
-            reinsert_fn=make_reinsert(client, cache, enricher, classifier, comparator, log=log))
+        # No preemption: weekly runs on the LOCAL cache (never pulled from / pushed to R2), so
+        # its cooldown/origin rows would diverge from the cloud's and the two pipelines could
+        # swap cards back and forth. Phase 2 (cloud) owns preemption.
+        return await ensure_listen_queue(client, cache, enricher, comparator, synth, log=log,
+                                         preempt=False)
 
     def publish_fn():
         episodes = episodes_for_queue(client, cache)

@@ -121,7 +121,7 @@ def make_synth(cache, engine=None):
 async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
                               target_hours: float = config.TARGET_QUEUE_HOURS,
                               source_list_ids=config.QUEUE_SOURCE_LIST_IDS,
-                              reinsert_fn=None, checkpoint=None,
+                              reinsert_fn=None, checkpoint=None, preempt: bool = True,
                               log=None) -> dict:
     target_sec = target_hours * 3600
     queue_id = client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
@@ -223,10 +223,13 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
     queue_feats = await enricher.aenrich_many(queue_cards)
     order = await merge_presorted([queue_feats, added], comparator.acompare)
 
-    pre = await _preempt(client, cache, enricher, comparator, synth, order, secs, run_secs,
-                         target_sec=target_sec, queue_id=queue_id, pool=pool,
-                         source_list_ids=source_list_ids, reinsert_fn=reinsert_fn,
-                         checkpoint=checkpoint, log=log)
+    if not preempt:
+        pre = {"kept": list(order), "admitted": [], "evicted": []}
+    else:
+        pre = await _preempt(client, cache, enricher, comparator, synth, order, secs,
+                             run_secs, target_sec=target_sec, queue_id=queue_id, pool=pool,
+                             source_list_ids=source_list_ids, reinsert_fn=reinsert_fn,
+                             checkpoint=checkpoint, log=log)
     final = pre["kept"]
     for i, f in enumerate(final):
         client.set_card_position(f.card_id, (i + 1) * 1000.0)
@@ -276,18 +279,24 @@ async def _preempt(client, cache, enricher, comparator, synth, order, secs, run_
     per_list_feats, cards_by_id, origin_by_id = pool
 
     bar = order[-1]                                           # 1. bar
-    challengers: list[CardFeatures] = []                      # 2. challengers
+    # 2. challengers: up to `cap` winners PER list (each list is sorted, so stop at its first
+    # loss), then merge the per-list winner runs and keep the overall top `cap` — so one list
+    # can't starve another's #1.
+    winner_runs = []
     for run in per_list_feats:
+        wins = []
         for f in run:
-            if len(challengers) >= cap:
+            if len(wins) >= cap:
                 break
             if f.card_id in in_q or f.card_id in cooling:
                 continue
             winner = await comparator.acompare(f, bar)
             if winner is f or winner == f:
-                challengers.append(f)
+                wins.append(f)
             else:
-                break                                         # list is sorted: rest lose too
+                break
+        winner_runs.append(wins)
+    challengers = (await merge_presorted(winner_runs, comparator.acompare))[:cap]
     if not challengers:
         return untouched
 
@@ -361,14 +370,22 @@ async def _preempt(client, cache, enricher, comparator, synth, order, secs, run_
     # 7. apply — evict first (a kill now leaves the queue UNDER target; top-up refills it)
     ev_ids = {f.card_id for f in evicted}
     ev_cards = [c for c in client.get_cards(queue_id) if c.id in ev_ids]
+    rehomed = False
     if reinsert_fn is not None:
         # Admitted cards still sit in their source lists (evict-first); exclude them so the
         # re-homed cards' rank markers count only cards that stay.
-        await reinsert_fn(ev_cards, exclude={f.card_id for f in admitted})
-    else:
+        try:
+            await reinsert_fn(ev_cards, exclude={f.card_id for f in admitted})
+            rehomed = True
+        except Exception as e:  # noqa: BLE001 — fall back rather than half-apply the pass
+            if log:
+                log.warning(f"  preempt: re-home failed ({type(e).__name__}: {e}); "
+                            f"sending evicted cards to '{config.TO_BE_PROCESSED_LIST_NAME}'")
+    if not rehomed:
         review_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
-        for c in ev_cards:
-            client.move_card(c.id, review_id, pos="bottom")
+        for c in client.get_cards(queue_id):      # only those a failed re-home left behind
+            if c.id in ev_ids:
+                client.move_card(c.id, review_id, pos="bottom")
     for f in admitted:
         client.move_card(f.card_id, queue_id, pos="bottom")
 

@@ -299,8 +299,9 @@ run) → review → `--apply`.
   `QUEUE_PREEMPT_MAX` in, `QUEUE_EVICT_MAX` out. Evicted cards go back to their origin list
   (`queue_origin` cache table; classifier only for cards queued before this existed) and
   sit out `QUEUE_EVICT_COOLDOWN_DAYS`; voice failures sit out ~one run (`queue_cooldown`).
-  Shared routing helpers live in `routing.py`. Weekly passes no checkpoint (local cache,
-  never pulled from R2).
+  Shared routing helpers live in `routing.py`. Only Phase 2 (cloud) preempts; weekly runs
+  on the local cache (never synced with R2) so it calls `ensure_listen_queue(preempt=False)`.
+  Cap is per list then merged, so one list can't starve the other's #1.
 - `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_SESSION_COOKIE`
   (the web session cookie for Inbox access — see the Inbox section), `ANTHROPIC_API_KEY`,
   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
