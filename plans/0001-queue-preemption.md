@@ -9,103 +9,110 @@ queue is full, nothing new enters, so a freshly routed card that outranks everyt
 queue (2026-11-07: the Character.AI Bookface post landed at life_optim #1) waits until Jay
 listens the queue down. The queue should reflect the current top material.
 
-## Design
+## Rule
 
-Rule: **the queue is the top-ranked prefix of (queue ∪ challengers) that reaches
-`TARGET_QUEUE_HOURS`.** A preemption pass runs in `ensure_listen_queue` after self-heal and
-the existing top-up, before the final re-order.
+The queue is the top-ranked prefix of (queue ∪ challengers) that reaches the cut. A
+**preemption pass** runs inside `ensure_listen_queue` after self-heal and the existing
+top-up, replacing the current final re-order step.
 
-0. **Gate.** Run the pass only when `Q` is non-empty and its total seconds ≥ `target_sec`
-   (below target, the top-up already tried every eligible card).
-1. **Bar.** Merge `queue_feats` with `added` once (hoisted from the final step) to get the
-   current queue order `Q`. The bar is `Q[-1]`, fixed for the pass.
-2. **Challengers.** For each source list (System 1, Life Optim — already sorted), walk from
-   the top over cards not in `Q` with `ok` features; compare each with the bar; a winner is a
-   challenger; stop the list at its first loss. **Cooldown:** skip cards evicted in the
-   last `config.QUEUE_EVICT_COOLDOWN_DAYS` (default 7), read from a new cache table
-   `queue_cooldown(card_id PRIMARY KEY, reason, at)` (reason = `evicted` | `synth_failed`) added in `Cache._migrate`, so a noisy
-   comparison cannot bounce a card in and out every run. Cap total challengers at
-   `config.QUEUE_PREEMPT_MAX` (default 5; 0 disables). Reuse the top-up's enrichment when it
-   ran; otherwise enrich the source lists here (cached digests). Pairwise results are cached
-   by the comparator, so repeat runs on unchanged lists cost no LLM calls.
-3. **Place.** Binary-insert each challenger into `Q` with `sort.insert_index` (~log2 n each,
-   concurrent, then order same-slot challengers with `merge_sort` — i.e. reuse
-   `_merge_newcomers`) → combined order `C`.
-4. **Synthesize** the challengers (≤ cap; `synth.many` if present, else `synth`). Drop any
-   whose audio is `None` or raises (they are removed from `C`). Audio is cached, so a
-   challenger that ends up outside the prefix costs nothing next time.
-5. **Cut.** Walk `C` top-down accumulating audio seconds; keep cards until the running total
-   is ≥ `cut_sec`, where `cut_sec = target_sec` normally, and `cut_sec = pre` (pre-pass queue
-   seconds) only when the queue is over target by more than its last clip
-   (`pre - secs(Q[-1]) >= target_sec`, i.e. manual drags or a lowered target). A queue that
-   the cut itself produced is within one clip of target, so the next run cuts at
-   `target_sec` again — no ratchet; everything after that point is outside the queue. Queue cards outside
-   the prefix are **evicted**; challengers inside it are **admitted**; challengers outside it
-   stay where they are. This bounds hours (the queue is never more than one clip over
-   target) and only evicts cards that rank below the kept set — no uncompared evictions.
-   If the queue was below target after top-up (pool exhausted), the cut keeps everything.
-   **Guard:** the cut only applies when at least one challenger lands inside the kept
-   prefix; with no challengers (or none surviving synth / none in the prefix) the queue is
-   left untouched, even if it is over target (manual drags, lowered target).
-6. **Apply — evict first, then admit.** Record and move evicted cards out first, then move
-   admitted cards in (a kill mid-apply leaves the queue under target, which the next run's
-   top-up refills, rather than over target, which the guard would preserve). Re-home evicted
-   cards with
-   `reinsert_evicted(cards)`, defined in a new neutral module `routing.py` (avoids the
-   `phase2` / `weekly` shared helpers in one place). It records each eviction in the cache, classifies each evicted card (`Classifier.aclassify`,
-   one uncached Haiku call per card, ≤ cap per run), re-reads the destination list with
-   `get_cards` (fresh snapshot, so the just-moved cards are not in it), binary-inserts with
-   `_merge_newcomers`, places with `_assign_positions`, and writes the rank marker.
-   `_merge_newcomers` / `_assign_positions` move to `routing.py`; `phase2.py` imports them
-   from there. `ensure_listen_queue` takes an optional `reinsert_fn`; both pipelines'
-   `_build_and_run` pass one built from their classifier. Without it, evicted cards go to
-   `To Be Processed` (same as orphan self-heal).
-7. **Order.** Final positions = the kept prefix of `C` in order.
-8. **Log + return.** Recompute `hours`, `reached_target`, `size` from the kept prefix. `preempt: admitted N [...], evicted M [...]`; add `"preempted"` and
-   `"evicted"` to the return dict.
+## Cache additions (`cache.py`)
 
-Kill-safety: evictions are applied before admissions (see 6). An admitted card moved before its audio row reaches R2 is caught by the
-existing orphan self-heal on the next run.
+- `queue_cooldown(card_id, reason, at, PRIMARY KEY (card_id, reason))`, reason ∈
+  {`evicted`, `synth_failed`}. API: `put_cooldown(card_id, reason)`;
+  `cooldown_ids(now) -> set` returns cards with an `evicted` row newer than
+  `QUEUE_EVICT_COOLDOWN_DAYS` OR a `synth_failed` row newer than
+  `QUEUE_SYNTH_FAIL_COOLDOWN_HOURS`. Separate rows per reason, so one never overwrites the
+  other.
+- `queue_origin(card_id PRIMARY KEY, list_id)`. API: `put_origin(card_id, list_id)`,
+  `get_origin(card_id) -> str | None`. Written whenever a card enters the queue — in the
+  top-up (the list it came from is known per `source_list_ids` run) and in preemption.
+- Both tables via `CREATE TABLE IF NOT EXISTS` in `_SCHEMA` (works on old DBs).
+- `ensure_listen_queue` uses these via `getattr(cache, ..., None)`, so test fakes without them
+  still work (no cooldown / no origin).
+
+## Pass
+
+0. **Gate.** Let `Q` = merge of existing queue feats and top-up `added` (the merge the final
+   step already does, hoisted). `secs(id)` = this run's synth asset seconds, else cached audio
+   seconds. `pre = Σ secs(Q)`. Skip the pass (just order `Q`) if `QUEUE_PREEMPT_MAX == 0`,
+   `Q` is empty, or `pre < target_sec`.
+1. **Bar** = `Q[-1]`, fixed for the pass.
+2. **Challengers.** For each source list (System 1, Life Optim — each already sorted), walk
+   from the top over `ok` cards not in `Q` and not in `cooldown_ids`; compare with the bar;
+   a winner is a challenger; stop that list at its first loss. Stop entirely at
+   `QUEUE_PREEMPT_MAX` challengers. Reuse the top-up's per-list feats when it ran, else
+   enrich the source lists here (cached digests). Remember each challenger's source list.
+   No challengers → order `Q`, done.
+3. **Synthesize** challengers (`synth.many` if present, else `synth` with try/except).
+   Failures (`None` / raise): `put_cooldown(id, "synth_failed")`, dropped. None left → done.
+4. **Place.** `C = _merge_newcomers(Q, survivors)` (binary insert, ~log2 n each).
+5. **Cut.** `cut = pre if pre - secs(Q[-1]) >= target_sec else target_sec` (only a queue
+   over target by more than its last clip — manual drags, lowered target — keeps its size;
+   a queue the cut produced is within one clip of target, so no ratchet). Walk `C`
+   top-down, keeping cards while the running total is `< cut` before adding each. Kept =
+   prefix; evicted = queue cards outside it; admitted = challengers inside it.
+   **Eviction cap:** while `len(evicted) > QUEUE_EVICT_MAX`, remove the lowest-ranked
+   admitted challenger from `C` and recompute the cut. **Guard:** if no challenger is
+   admitted, leave the queue untouched (order `Q`), even if over target.
+6. **Persist before Trello.** `put_cooldown(id, "evicted")` for each evicted card,
+   `put_origin(id, src)` for each admitted card, then call the optional `checkpoint`
+   (Phase 2 / weekly pass their R2 push, as `_route_parallel` does before its writes).
+7. **Apply — evict first, then admit.** Re-home evicted cards via the optional
+   `reinsert_fn(cards)`; without one, move them to `To Be Processed` (like the orphan
+   self-heal). Then move admitted cards into the queue. A kill mid-apply leaves the queue
+   under target, which the next top-up refills.
+8. **Order + return.** Positions = kept order. Return dict gets `hours`, `size`,
+   `reached_target` recomputed from the kept prefix, plus `preempted` and `evicted` id lists;
+   log `preempt: admitted N [...], evicted M [...]`.
+
+## Re-homing (`routing.py`)
+
+New neutral module holding `_merge_newcomers` and `_assign_positions` (moved from
+`pipelines/phase2.py`, which imports them back) plus:
+
+`make_reinsert(client, cache, enricher, classifier, comparator, log) -> async reinsert(cards)`:
+for each card, destination = `cache.get_origin(id)`, else `target_list_id(classifier
+label)` (one Haiku call; only for cards that entered the queue before this change). Group
+by destination; for each list re-read `get_cards` (fresh snapshot), enrich, binary-insert
+with `_merge_newcomers`, place with `_assign_positions`, move, write the rank marker.
+Bounded by `QUEUE_EVICT_MAX` cards per run.
+
+`pipelines/phase2.py` and `pipelines/weekly.py` `_build_and_run` pass
+`reinsert_fn=make_reinsert(...)` and `checkpoint=...` into `ensure_listen_queue`.
 
 ## Config
 
-- `QUEUE_PREEMPT_MAX = 5` in `config.py` (0 disables the pass).
-- `QUEUE_EVICT_COOLDOWN_DAYS = 7`, `QUEUE_SYNTH_FAIL_COOLDOWN_HOURS = 20`, `QUEUE_EVICT_MAX = 10`.
+`QUEUE_PREEMPT_MAX = 5` (0 disables), `QUEUE_EVICT_MAX = 10`,
+`QUEUE_EVICT_COOLDOWN_DAYS = 7`, `QUEUE_SYNTH_FAIL_COOLDOWN_HOURS = 20`.
 
-## Tests (`tests/test_listen_queue.py`)
+## Tests
 
-Fakes: `FakeClient.ensure_list` maps names to distinct ids; `move_card` removes the card
-from its old list. `_NoCache` gains `get/put_eviction`.
+`tests/test_listen_queue.py` fakes: `FakeClient.ensure_list` maps names to distinct ids;
+`move_card` removes the card from its old list. A small in-memory fake cache (or the real
+`Cache(":memory:")`) for cooldown/origin tests.
 
-- Over-target queue with no challengers → untouched.
-- Empty queue / below target → pass skipped, no crash.
-- Eviction cap: a long challenger that would evict > cap short clips is not admitted.
-- Re-homing uses `queue_origin` and makes no classify call for recorded cards.
-- Checkpoint is called before the first Trello move of the pass.
-- Cooldown: a card evicted within the window is not a challenger even if it beats the bar.
-
-- Full queue + a source card that beats the bottom → it is admitted, the bottom card is
-  evicted, queue hours stay ≥ target, final order is impact-sorted.
-- Source card that loses to the bottom → nothing changes (one comparison per list).
-- Cap: more winners than `QUEUE_PREEMPT_MAX` → only the cap is admitted.
-- Cut keeps hours in [target, target + one clip): long challenger evicts several short
-  bottom cards; short challenger cannot evict a long bottom card if that would undershoot.
-- Three challengers beat the bar but the 2nd-lowest queue card outranks one of them → that
-  queue card is not evicted.
-- Two consecutive runs, each with a new challenger, stay within one clip of target.
-- Over-target (1.5×) queue + one challenger → evicted seconds ≤ admitted seconds + one clip.
-- Synth failure is recorded; a second run makes no synth call for that card.
-- Idempotence: a second run on unchanged lists admits and evicts nothing.
-- Synth failure for a challenger → not admitted, nothing evicted for it.
-- `reinsert_fn` is called with evicted cards; without it they go to `To Be Processed`.
-- Existing tests keep passing (top-up behaviour unchanged when below target).
-- Existing phase 2 tests pass after moving `_merge_newcomers`/`_assign_positions` to
-  `routing.py`; a unit test for `reinsert_evicted` with fakes (fresh snapshot, rank marker).
+- Full queue + a source card beating the bottom → admitted, bottom evicted, hours ≥ target,
+  final order impact-sorted, origin recorded.
+- Source card losing to the bottom → nothing changes; one comparison per list.
+- Challenger cap; eviction cap (long challenger vs many short clips → not admitted).
+- Cut: hours within one clip of target; short challenger can't evict a long bottom card if
+  that undershoots; two consecutive runs with new challengers stay within one clip.
+- Three challengers beat the bar, 2nd-lowest queue card outranks one → it stays.
+- Over-target (1.5×) queue + one challenger → evicted secs ≤ admitted secs + one clip.
+- Over-target queue, no challengers → untouched. Empty / below-target queue → no crash.
+- Cooldowns: evicted card skipped for 7 days; synth failure skipped next run only, and
+  doesn't overwrite an `evicted` row.
+- Idempotence: second run on unchanged lists admits/evicts nothing.
+- Checkpoint called before the first Trello move; evictions moved before admissions.
+- `reinsert_fn` gets evicted cards; without it they go to `To Be Processed`.
+- `routing.make_reinsert`: uses origin (no classify call) when recorded, classifier
+  otherwise; fresh snapshot; rank marker written.
+- Existing listen-queue and phase 2 tests pass.
 
 ## Docs
 
-- README "Listen Queue" section + CLAUDE.md: queue now admits higher-ranked cards and
-  evicts its bottom, capped per run.
+README "Listen Queue" section + CLAUDE.md: queue admits higher-ranked cards and evicts its
+bottom (≤ 5 in, ≤ 10 out per run, 7-day cooldown).
 
 ## Rollout
 
