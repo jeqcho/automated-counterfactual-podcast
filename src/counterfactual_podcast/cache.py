@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS pairwise (
 CREATE TABLE IF NOT EXISTS audio (
     card_id TEXT PRIMARY KEY, path TEXT, seconds REAL, engine TEXT, ts REAL
 );
+CREATE TABLE IF NOT EXISTS queue_cooldown (
+    card_id TEXT PRIMARY KEY, reason TEXT, at REAL
+);
 """
 
 
@@ -129,6 +132,16 @@ class Cache:
         if not r:
             return None
         return AudioAsset(r["card_id"], r["path"], r["seconds"], r["engine"])
+
+    # --- listen-queue cooldown (evicted / failed-to-voice cards) -----------
+    def put_cooldown(self, card_id: str, reason: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO queue_cooldown VALUES (?,?,?)",
+                          (card_id, reason, time.time()))
+        self.conn.commit()
+
+    def cooldown_ids(self, since: float) -> set[str]:
+        rows = self.conn.execute("SELECT card_id FROM queue_cooldown WHERE at >= ?", (since,))
+        return {r[0] for r in rows}
 
     def close(self) -> None:
         self.conn.close()

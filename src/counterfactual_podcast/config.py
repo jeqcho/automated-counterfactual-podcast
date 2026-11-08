@@ -37,6 +37,10 @@ LISTEN_QUEUE_LIST_NAME = "Listen Queue"
 
 # --- Ranking / queue constants -------------------------------------------
 TARGET_QUEUE_HOURS = 20          # soft floor for the listen queue
+# Preemption: when the queue is full, up to this many higher-ranked source cards per run
+# replace its lowest cards (0 disables). Evicted / failed-to-voice cards sit out this long.
+QUEUE_PREEMPT_MAX = 5
+QUEUE_EVICT_COOLDOWN_DAYS = 7
 WPM_READING = 230                # reading-time estimate (ranking denominator)
 COPELAND_HEAD = 40               # stabilize the top-N of each list with round-robin
 

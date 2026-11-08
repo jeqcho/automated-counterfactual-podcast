@@ -15,6 +15,8 @@ Rule: **the queue is the top-ranked prefix of (queue ∪ challengers) that reach
 `TARGET_QUEUE_HOURS`.** A preemption pass runs in `ensure_listen_queue` after self-heal and
 the existing top-up, before the final re-order.
 
+0. **Gate.** Run the pass only when `Q` is non-empty and its total seconds ≥ `target_sec`
+   (below target, the top-up already tried every eligible card).
 1. **Bar.** Merge `queue_feats` with `added` once (hoisted from the final step) to get the
    current queue order `Q`. The bar is `Q[-1]`, fixed for the pass.
 2. **Challengers.** For each source list (System 1, Life Optim — already sorted), walk from
@@ -68,7 +70,7 @@ existing orphan self-heal on the next run.
 ## Config
 
 - `QUEUE_PREEMPT_MAX = 5` in `config.py` (0 disables the pass).
-- `QUEUE_EVICT_COOLDOWN_DAYS = 7`.
+- `QUEUE_EVICT_COOLDOWN_DAYS = 7`, `QUEUE_SYNTH_FAIL_COOLDOWN_HOURS = 20`, `QUEUE_EVICT_MAX = 10`.
 
 ## Tests (`tests/test_listen_queue.py`)
 
@@ -76,6 +78,10 @@ Fakes: `FakeClient.ensure_list` maps names to distinct ids; `move_card` removes 
 from its old list. `_NoCache` gains `get/put_eviction`.
 
 - Over-target queue with no challengers → untouched.
+- Empty queue / below target → pass skipped, no crash.
+- Eviction cap: a long challenger that would evict > cap short clips is not admitted.
+- Re-homing uses `queue_origin` and makes no classify call for recorded cards.
+- Checkpoint is called before the first Trello move of the pass.
 - Cooldown: a card evicted within the window is not a challenger even if it beats the bar.
 
 - Full queue + a source card that beats the bottom → it is admitted, the bottom card is
