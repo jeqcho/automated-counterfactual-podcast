@@ -46,17 +46,24 @@ top-up, replacing the current final re-order step.
 3. **Synthesize** challengers (`synth.many` if present, else `synth` with try/except).
    Failures (`None` / raise): `put_cooldown(id, "synth_failed")`, dropped. None left → done.
 4. **Place.** `C = _merge_newcomers(Q, survivors)` (binary insert, ~log2 n each).
-5. **Cut.** `cut = pre if pre - secs(Q[-1]) >= target_sec else target_sec` (only a queue
-   over target by more than its last clip — manual drags, lowered target — keeps its size;
-   a queue the cut produced is within one clip of target, so no ratchet). Walk `C`
-   top-down, keeping cards while the running total is `< cut` before adding each. Kept =
-   prefix; evicted = queue cards outside it; admitted = challengers inside it.
-   **Eviction cap:** while `len(evicted) > QUEUE_EVICT_MAX`, remove the lowest-ranked
-   admitted challenger from `C` and recompute the cut. **Guard:** if no challenger is
-   admitted, leave the queue untouched (order `Q`), even if over target.
+5. **Cut (displacement rule — never grows the queue past `max(pre, target + one clip)`).**
+   - Prefix `P` = walk `C` top-down, keeping each card while the running total is
+     `< target_sec` before adding it (so `Σ P ∈ [target, target + one clip)`).
+   - Admitted = challengers in `P`. **Guard:** none → leave the queue untouched (order `Q`),
+     even if it is over target.
+   - Eviction candidates = queue cards not in `P`, taken bottom-up. Evict while
+     `evicted_secs < admitted_secs`. Queue cards outside `P` that are not needed to make
+     room stay (below the kept prefix) — so a manually overfilled queue is never trimmed
+     beyond what the newcomers displace.
+   - Result: total ≤ `max(pre, Σ P)`. A near-target queue stays within one clip of target;
+     an overfilled one never grows. No mode switch, no ratchet.
+   - **Eviction cap:** if more than `QUEUE_EVICT_MAX` evictions are needed, drop the
+     lowest-ranked admitted challenger from `C` and recompute; repeat (no admissions left →
+     untouched).
 6. **Persist before Trello.** `put_cooldown(id, "evicted")` for each evicted card,
    `put_origin(id, src)` for each admitted card, then call the optional `checkpoint`
-   (Phase 2 / weekly pass their R2 push, as `_route_parallel` does before its writes).
+   (Phase 2 passes its existing R2 push, as `_route_parallel` does before its writes; weekly
+   gains the same `push_cache_to_r2` checkpoint when `R2_BUCKET` is set).
 7. **Apply — evict first, then admit.** Re-home evicted cards via the optional
    `reinsert_fn(cards)`; without one, move them to `To Be Processed` (like the orphan
    self-heal). Then move admitted cards into the queue. A kill mid-apply leaves the queue
@@ -96,9 +103,11 @@ Bounded by `QUEUE_EVICT_MAX` cards per run.
 - Source card losing to the bottom → nothing changes; one comparison per list.
 - Challenger cap; eviction cap (long challenger vs many short clips → not admitted).
 - Cut: hours within one clip of target; short challenger can't evict a long bottom card if
-  that undershoots; two consecutive runs with new challengers stay within one clip.
+  that undershoots.
+- No ratchet: three consecutive runs with new challengers, starting (a) from a just-topped-up
+  queue and (b) from a 1.5× overfilled queue → total hours never rise above
+  `max(pre, target + one clip)`.
 - Three challengers beat the bar, 2nd-lowest queue card outranks one → it stays.
-- Over-target (1.5×) queue + one challenger → evicted secs ≤ admitted secs + one clip.
 - Over-target queue, no challengers → untouched. Empty / below-target queue → no crash.
 - Cooldowns: evicted card skipped for 7 days; synth failure skipped next run only, and
   doesn't overwrite an `evicted` row.
