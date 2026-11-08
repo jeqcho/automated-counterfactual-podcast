@@ -90,7 +90,10 @@ def make_synth(cache, engine=None):
 
         if concurrency <= 1:
             for feats, card in to_render:
-                results[feats.card_id] = await synth(feats, card)
+                try:
+                    results[feats.card_id] = await synth(feats, card)
+                except Exception:  # noqa: BLE001 — one bad card must not kill the batch
+                    results[feats.card_id] = None
             return results
 
         sem = asyncio.Semaphore(concurrency)
@@ -118,6 +121,7 @@ def make_synth(cache, engine=None):
 async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
                               target_hours: float = config.TARGET_QUEUE_HOURS,
                               source_list_ids=config.QUEUE_SOURCE_LIST_IDS,
+                              reinsert_fn=None, checkpoint=None,
                               log=None) -> dict:
     target_sec = target_hours * 3600
     queue_id = client.ensure_list(config.LISTEN_QUEUE_LIST_NAME)
@@ -141,26 +145,26 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
         queue_cards = [c for c in queue_cards if cache.get_audio(c.id)]
 
     in_queue = {c.id for c in queue_cards}
+    run_secs: dict[str, float] = {}   # audio seconds for cards voiced in THIS run
 
     def secs(card_id: str) -> float:
+        if card_id in run_secs:
+            return run_secs[card_id]
         a = cache.get_audio(card_id)
         return a.seconds if a else 0.0
 
+    put_origin = getattr(cache, "put_origin", None)
     current = sum(secs(c.id) for c in queue_cards)
     added: list[CardFeatures] = []
+    pool = None   # (per_list_feats, cards_by_id, origin_by_id) — reused by preemption
 
     if current < target_sec:
         # Each source list is ALREADY impact-sorted (sorted in place / kept sorted by
         # weekly insertion), so MERGE the per-list runs (~cross-list comparisons) instead
         # of a full re-sort of the combined pool (~n log n). Comparisons are sequential
         # LLM calls, so this is the ~8x first-run speedup.
-        cards_by_id = {}
-        per_list_feats = []
-        for lid in source_list_ids:
-            lst = [c for c in client.get_cards(lid) if c.id not in in_queue]
-            for c in lst:
-                cards_by_id[c.id] = c
-            per_list_feats.append([f for f in await enricher.aenrich_many(lst) if f.ok])
+        pool = await _source_pool(client, enricher, source_list_ids, in_queue)
+        per_list_feats, cards_by_id, origin_by_id = pool
         n_cand = sum(len(p) for p in per_list_feats)
         if log:
             log.info(f"queue at {current/3600:.1f}h < {target_hours}h — "
@@ -200,23 +204,172 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
                     continue
             if asset is None:
                 continue
+            if put_origin is not None:
+                put_origin(f.card_id, origin_by_id[f.card_id])
             client.move_card(f.card_id, queue_id, pos="bottom")
             added.append(f)
             in_queue.add(f.card_id)
+            run_secs[f.card_id] = asset.seconds
             current += asset.seconds
 
-    # Keep the whole queue ordered by impact (top = listen next). The existing queue is
-    # already sorted (last run) and `added` came out of the merge in sorted order, so merge
-    # those two presorted runs rather than re-sorting the whole queue from scratch.
+    # The existing queue is already sorted (last run) and `added` came out of the merge in
+    # sorted order, so merge those two presorted runs rather than re-sorting from scratch.
     queue_feats = await enricher.aenrich_many(queue_cards)
-    final = await merge_presorted([queue_feats, added], comparator.acompare)
+    order = await merge_presorted([queue_feats, added], comparator.acompare)
+
+    pre = await _preempt(client, cache, enricher, comparator, synth, order, secs, run_secs,
+                         target_sec=target_sec, queue_id=queue_id, pool=pool,
+                         source_list_ids=source_list_ids, reinsert_fn=reinsert_fn,
+                         checkpoint=checkpoint, log=log)
+    final = pre["kept"]
     for i, f in enumerate(final):
         client.set_card_position(f.card_id, (i + 1) * 1000.0)
 
+    current = sum(secs(f.card_id) for f in final)
     reached = current >= target_sec
     if log:
         log.info(f"queue now {current/3600:.1f}h ({len(final)} items), "
                  f"added {len(added)}, reached_target={reached}")
     return {"queue_id": queue_id, "hours": current / 3600, "target_hours": target_hours,
             "added": [f.card_id for f in added], "reached_target": reached,
-            "size": len(final)}
+            "size": len(final), "preempted": pre["admitted"], "evicted": pre["evicted"]}
+
+
+async def _source_pool(client, enricher, source_list_ids, exclude):
+    """Enrich each (already impact-sorted) source list, minus `exclude`, keeping ok cards.
+    Returns (per_list_feats, cards_by_id, origin_by_id)."""
+    per_list_feats, cards_by_id, origin_by_id = [], {}, {}
+    for lid in source_list_ids:
+        lst = [c for c in client.get_cards(lid) if c.id not in exclude]
+        for c in lst:
+            cards_by_id[c.id] = c
+            origin_by_id[c.id] = lid
+        per_list_feats.append([f for f in await enricher.aenrich_many(lst) if f.ok])
+    return per_list_feats, cards_by_id, origin_by_id
+
+
+async def _preempt(client, cache, enricher, comparator, synth, order, secs, run_secs, *,
+                   target_sec, queue_id, pool, source_list_ids, reinsert_fn, checkpoint,
+                   log) -> dict:
+    """Preemption pass (plans/0001-queue-preemption.md): when the queue is at target, source
+    cards that outrank its lowest card replace bottom cards, displacing at most their own
+    audio seconds. Returns {"kept": ordered feats, "admitted": [ids], "evicted": [ids]}."""
+    from .routing import _merge_newcomers
+
+    untouched = {"kept": list(order), "admitted": [], "evicted": []}
+    cap = config.QUEUE_PREEMPT_MAX
+    pre = sum(secs(f.card_id) for f in order)
+    if cap <= 0 or not order or pre < target_sec:            # 0. gate
+        return untouched
+
+    in_q = {f.card_id for f in order}
+    cooldown_ids = getattr(cache, "cooldown_ids", None)
+    cooling = cooldown_ids() if cooldown_ids is not None else set()
+    if pool is None:
+        pool = await _source_pool(client, enricher, source_list_ids, in_q)
+    per_list_feats, cards_by_id, origin_by_id = pool
+
+    bar = order[-1]                                           # 1. bar
+    challengers: list[CardFeatures] = []                      # 2. challengers
+    for run in per_list_feats:
+        for f in run:
+            if len(challengers) >= cap:
+                break
+            if f.card_id in in_q or f.card_id in cooling:
+                continue
+            winner = await comparator.acompare(f, bar)
+            if winner is f or winner == f:
+                challengers.append(f)
+            else:
+                break                                         # list is sorted: rest lose too
+    if not challengers:
+        return untouched
+
+    assets: dict = {}                                         # 3. synthesize
+    many = getattr(synth, "many", None)
+    if many is not None:
+        assets = await many([(f, cards_by_id.get(f.card_id)) for f in challengers])
+    else:
+        for f in challengers:
+            try:
+                assets[f.card_id] = await synth(f, cards_by_id.get(f.card_id))
+            except Exception:  # noqa: BLE001 — one bad card must not kill the run
+                assets[f.card_id] = None
+    put_cooldown = getattr(cache, "put_cooldown", None)
+    voiced = []
+    for f in challengers:
+        a = assets.get(f.card_id)
+        if a is None:
+            if put_cooldown is not None:
+                put_cooldown(f.card_id, "synth_failed")
+            if log:
+                log.warning(f"  preempt: could not voice {(f.title or '')[:40]} (cooldown)")
+        else:
+            run_secs[f.card_id] = a.seconds
+            voiced.append(f)
+    if not voiced:
+        return untouched
+
+    combined = await _merge_newcomers(order, voiced, comparator.acompare)   # 4. place
+
+    def cut(combined):                                        # 5. displacement cut
+        prefix, acc = [], 0.0
+        for f in combined:
+            if acc >= target_sec:
+                break
+            prefix.append(f)
+            acc += secs(f.card_id)
+        p_ids = {f.card_id for f in prefix}
+        admitted = [f for f in prefix if f.card_id not in in_q]
+        need = sum(secs(f.card_id) for f in admitted)
+        evicted, freed = [], 0.0
+        for f in reversed(order):                             # bottom-up, outside the prefix
+            if freed >= need:
+                break
+            if f.card_id in p_ids:
+                continue
+            evicted.append(f)
+            freed += secs(f.card_id)
+        return admitted, evicted
+
+    admitted, evicted = cut(combined)
+    while admitted and len(evicted) > config.QUEUE_EVICT_MAX:
+        drop = admitted[-1].card_id                           # lowest-ranked admitted
+        combined = [f for f in combined if f.card_id != drop]
+        admitted, evicted = cut(combined)
+    if not admitted:
+        return untouched
+
+    put_origin = getattr(cache, "put_origin", None)           # 6. persist before Trello
+    for f in evicted:
+        if put_cooldown is not None:
+            put_cooldown(f.card_id, "evicted")
+    for f in admitted:
+        if put_origin is not None:
+            put_origin(f.card_id, origin_by_id[f.card_id])
+    if checkpoint is not None:
+        maybe = checkpoint()
+        if hasattr(maybe, "__await__"):
+            await maybe
+
+    # 7. apply — evict first (a kill now leaves the queue UNDER target; top-up refills it)
+    ev_ids = {f.card_id for f in evicted}
+    ev_cards = [c for c in client.get_cards(queue_id) if c.id in ev_ids]
+    if reinsert_fn is not None:
+        await reinsert_fn(ev_cards)
+    else:
+        review_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
+        for c in ev_cards:
+            client.move_card(c.id, review_id, pos="bottom")
+    for f in admitted:
+        client.move_card(f.card_id, queue_id, pos="bottom")
+
+    kept = [f for f in combined                               # 8. full kept list, C order
+            if f.card_id in in_q and f.card_id not in ev_ids
+            or f.card_id in {a.card_id for a in admitted}]
+    if log:
+        log.info(f"preempt: admitted {len(admitted)} "
+                 f"{[(f.title or '')[:40] for f in admitted]}, evicted {len(evicted)} "
+                 f"{[(f.title or '')[:40] for f in evicted]}")
+    return {"kept": kept, "admitted": [f.card_id for f in admitted],
+            "evicted": [f.card_id for f in evicted]}

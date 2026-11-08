@@ -293,6 +293,14 @@ run) → review → `--apply`.
     Trello's own integrations (mobile share, email-to-inbox, etc.); we only read + move OUT.
 - Listen queue tops up from **System 1 + Life Optim only** (System 2 excluded — needs
   focused reading). 20h is a **soft floor** (capped by extractable-content yield).
+- **Queue preemption** (2026-11-07, plans/0001-queue-preemption.md): when the queue is at
+  target, source cards that beat its lowest card are voiced and admitted, displacing at most
+  their own audio seconds from the bottom (never trims a manually overfilled queue). Caps:
+  `QUEUE_PREEMPT_MAX` in, `QUEUE_EVICT_MAX` out. Evicted cards go back to their origin list
+  (`queue_origin` cache table; classifier only for cards queued before this existed) and
+  sit out `QUEUE_EVICT_COOLDOWN_DAYS`; voice failures sit out ~one run (`queue_cooldown`).
+  Shared routing helpers live in `routing.py`. Weekly passes no checkpoint (local cache,
+  never pulled from R2).
 - `.env` (gitignored) holds: `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_SESSION_COOKIE`
   (the web session cookie for Inbox access — see the Inbox section), `ANTHROPIC_API_KEY`,
   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,

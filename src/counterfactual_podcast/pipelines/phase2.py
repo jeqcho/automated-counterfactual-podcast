@@ -171,12 +171,6 @@ async def _build_and_run(apply: bool, log=None) -> dict:
     comparator = Comparator(cache=cache, profile_doc=profile)
     synth = make_synth(cache)
 
-    async def ensure_queue_fn():
-        return await ensure_listen_queue(client, cache, enricher, comparator, synth, log=log)
-
-    def publish_fn():
-        return publish(episodes_for_queue(client, cache), upload=bool(config.R2_BUCKET))
-
     # Checkpoint the SQLite cache to R2 every N routed cards (only when R2 is configured —
     # i.e. on the cloud, where the container can be killed mid-run). push_cache_to_r2 is a
     # blocking boto3 upload, so run it off the loop to keep /health responsive during the push.
@@ -186,6 +180,17 @@ async def _build_and_run(apply: bool, log=None) -> dict:
 
         async def checkpoint():
             await asyncio.to_thread(push_cache_to_r2)
+
+    from ..routing import make_reinsert
+    reinsert_fn = make_reinsert(client, cache, enricher, classifier, comparator, log=log)
+
+    async def ensure_queue_fn():
+        return await ensure_listen_queue(client, cache, enricher, comparator, synth,
+                                         reinsert_fn=reinsert_fn, checkpoint=checkpoint,
+                                         log=log)
+
+    def publish_fn():
+        return publish(episodes_for_queue(client, cache), upload=bool(config.R2_BUCKET))
 
     return await run_phase2(client, cache, enricher, classifier, comparator,
                             ensure_queue_fn, publish_fn, apply=apply, log=log,

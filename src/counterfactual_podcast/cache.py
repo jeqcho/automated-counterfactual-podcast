@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS audio (
     card_id TEXT PRIMARY KEY, path TEXT, seconds REAL, engine TEXT, ts REAL
 );
 CREATE TABLE IF NOT EXISTS queue_cooldown (
-    card_id TEXT PRIMARY KEY, reason TEXT, at REAL
+    card_id TEXT, reason TEXT, at REAL, PRIMARY KEY (card_id, reason)
+);
+CREATE TABLE IF NOT EXISTS queue_origin (
+    card_id TEXT PRIMARY KEY, list_id TEXT
 );
 """
 
@@ -133,15 +136,32 @@ class Cache:
             return None
         return AudioAsset(r["card_id"], r["path"], r["seconds"], r["engine"])
 
-    # --- listen-queue cooldown (evicted / failed-to-voice cards) -----------
+    # --- listen-queue cooldown + origin (preemption bookkeeping) ------------
     def put_cooldown(self, card_id: str, reason: str) -> None:
+        """reason: 'evicted' | 'synth_failed' (separate rows, never overwrite each other)."""
         self.conn.execute("INSERT OR REPLACE INTO queue_cooldown VALUES (?,?,?)",
                           (card_id, reason, time.time()))
         self.conn.commit()
 
-    def cooldown_ids(self, since: float) -> set[str]:
-        rows = self.conn.execute("SELECT card_id FROM queue_cooldown WHERE at >= ?", (since,))
+    def cooldown_ids(self, now: float | None = None) -> set[str]:
+        """Cards that must sit out preemption: evicted recently, or failed to voice recently."""
+        from . import config
+        now = time.time() if now is None else now
+        rows = self.conn.execute(
+            "SELECT card_id FROM queue_cooldown WHERE "
+            "(reason='evicted' AND at >= ?) OR (reason='synth_failed' AND at >= ?)",
+            (now - config.QUEUE_EVICT_COOLDOWN_DAYS * 86400,
+             now - config.QUEUE_SYNTH_FAIL_COOLDOWN_HOURS * 3600))
         return {r[0] for r in rows}
+
+    def put_origin(self, card_id: str, list_id: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO queue_origin VALUES (?,?)", (card_id, list_id))
+        self.conn.commit()
+
+    def get_origin(self, card_id: str) -> str | None:
+        row = self.conn.execute("SELECT list_id FROM queue_origin WHERE card_id=?",
+                                (card_id,)).fetchone()
+        return row[0] if row else None
 
     def close(self) -> None:
         self.conn.close()
