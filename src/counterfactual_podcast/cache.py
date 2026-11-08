@@ -143,16 +143,20 @@ class Cache:
                           (card_id, reason, time.time()))
         self.conn.commit()
 
-    def cooldown_ids(self, now: float | None = None) -> set[str]:
-        """Cards that must sit out preemption: evicted recently, or failed to voice recently."""
+    def cooldown_ids(self, now: float | None = None,
+                     reasons=("evicted", "synth_failed")) -> set[str]:
+        """Cards sitting out: evicted recently (preemption only) or failed to voice recently."""
         from . import config
         now = time.time() if now is None else now
-        rows = self.conn.execute(
-            "SELECT card_id FROM queue_cooldown WHERE "
-            "(reason='evicted' AND at >= ?) OR (reason='synth_failed' AND at >= ?)",
-            (now - config.QUEUE_EVICT_COOLDOWN_DAYS * 86400,
-             now - config.QUEUE_SYNTH_FAIL_COOLDOWN_HOURS * 3600))
-        return {r[0] for r in rows}
+        cutoff = {"evicted": now - config.QUEUE_EVICT_COOLDOWN_DAYS * 86400,
+                  "synth_failed": now - config.QUEUE_SYNTH_FAIL_COOLDOWN_HOURS * 3600}
+        out: set[str] = set()
+        for reason in reasons:
+            rows = self.conn.execute(
+                "SELECT card_id FROM queue_cooldown WHERE reason=? AND at >= ?",
+                (reason, cutoff[reason]))
+            out |= {r[0] for r in rows}
+        return out
 
     def put_origin(self, card_id: str, list_id: str) -> None:
         self.conn.execute("INSERT OR REPLACE INTO queue_origin VALUES (?,?)", (card_id, list_id))

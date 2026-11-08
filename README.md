@@ -76,7 +76,7 @@ cached so re-runs are nearly free.
   deep material isn't meant for passive listening).
 - When the queue is full, **higher-ranked cards still get in**: a new card that outranks
   the queue's lowest item takes its place, and the displaced card goes back into its
-  reading list at its rank (up to 5 in / 10 out per run; a displaced card sits out 7 days).
+  reading list at its rank (up to 5 in / 10 out per run; a displaced card can't push back in for 7 days).
 - Each queued card's text is converted to speech locally (free), and the queue is
   published as a **podcast RSS feed** hosted on Cloudflare. Jay subscribes in any
   podcast app, listens to the top item first, and **archives it when done** — the next

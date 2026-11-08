@@ -319,13 +319,13 @@ async def test_make_reinsert_uses_origin_then_classifier():
 
 
 async def test_topup_then_preempt_same_call_and_topup_respects_cooldown():
-    # queue: q_low (1h) < 2h target. Top-up skips cooling 'cool' (best in System 1), adds 'a'
+    # queue: q_low (1h) < 2h target. Top-up skips 'cool' (failed to voice last run), adds 'a'
     # (2h reached). Preemption then admits 'b' (beats bar q_low) and evicts q_low — same call.
     prio = {"q_low": 1, "cool": 10, "a": 8, "b": 5, "c": 0}
     lengths = {k: H for k in prio}
     client, cache, enr, cmp = setup(["q_low"], s1=["cool", "b", "c"], lo=["a"], prio=prio,
                                     lengths=lengths)
-    cache.put_cooldown("cool", "evicted")
+    cache.put_cooldown("cool", "synth_failed")
     res = await run(client, cache, enr, cmp, make_synth(lengths), target=2)
     assert res["added"] == ["a"]
     assert res["preempted"] == ["b"] and res["evicted"] == ["q_low"]
@@ -386,3 +386,12 @@ async def test_preempt_disabled_flag():
     client, cache, enr, cmp = setup(["q1", "q2"], s1=["n"], prio=prio, lengths=lengths)
     res = await run(client, cache, enr, cmp, make_synth(lengths), preempt=False)
     assert res["preempted"] == [] and client.ids(Q) == ["q1", "q2"]
+
+
+async def test_evicted_card_can_refill_an_under_target_queue():
+    prio = {"q1": 9, "e": 8, "low": 1}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q1"], s1=["e", "low"], prio=prio, lengths=lengths)
+    cache.put_cooldown("e", "evicted")
+    res = await run(client, cache, enr, cmp, make_synth(lengths), target=2)
+    assert res["added"] == ["e"]

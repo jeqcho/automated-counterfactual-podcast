@@ -156,7 +156,9 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
     put_origin = getattr(cache, "put_origin", None)
     put_cooldown = getattr(cache, "put_cooldown", None)
     cooldown_ids = getattr(cache, "cooldown_ids", None)
-    cooling = cooldown_ids() if cooldown_ids is not None else set()
+    # Top-up skips only cards that just failed to voice; an evicted card may refill the queue
+    # (it only sits out PREEMPTION, so it can't bounce straight back in by displacing others).
+    failing = cooldown_ids(reasons=("synth_failed",)) if cooldown_ids is not None else set()
     current = sum(secs(c.id) for c in queue_cards)
     added: list[CardFeatures] = []
     pool = None   # (per_list_feats, cards_by_id, origin_by_id) — reused by preemption
@@ -166,8 +168,7 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
         # weekly insertion), so MERGE the per-list runs (~cross-list comparisons) instead
         # of a full re-sort of the combined pool (~n log n). Comparisons are sequential
         # LLM calls, so this is the ~8x first-run speedup.
-        # Cooling cards (recently evicted / failed to voice) sit out the top-up too.
-        pool = await _source_pool(client, enricher, source_list_ids, in_queue | cooling)
+        pool = await _source_pool(client, enricher, source_list_ids, in_queue | failing)
         per_list_feats, cards_by_id, origin_by_id = pool
         n_cand = sum(len(p) for p in per_list_feats)
         if log:

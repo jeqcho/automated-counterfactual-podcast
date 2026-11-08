@@ -12,11 +12,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 from .. import config
 from ..classify import target_list_id
-from ..sort import insert_index, insert_sorted, merge_sort
+from ..sort import insert_sorted, merge_sort
 from ..routing import _assign_positions, _merge_newcomers  # noqa: F401 — shared with listen_queue
 from .weekly import _insertion_pos  # shared fractional-position helper
 
