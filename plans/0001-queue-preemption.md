@@ -33,7 +33,11 @@ the existing top-up, before the final re-order.
    whose audio is `None` or raises (they are removed from `C`). Audio is cached, so a
    challenger that ends up outside the prefix costs nothing next time.
 5. **Cut.** Walk `C` top-down accumulating audio seconds; keep cards until the running total
-   is ≥ `cut_sec = max(target_sec, pre-pass queue seconds)`; everything after that point is outside the queue. Queue cards outside
+   is ≥ `cut_sec`, where `cut_sec = target_sec` normally, and `cut_sec = pre` (pre-pass queue
+   seconds) only when the queue is over target by more than its last clip
+   (`pre - secs(Q[-1]) >= target_sec`, i.e. manual drags or a lowered target). A queue that
+   the cut itself produced is within one clip of target, so the next run cuts at
+   `target_sec` again — no ratchet; everything after that point is outside the queue. Queue cards outside
    the prefix are **evicted**; challengers inside it are **admitted**; challengers outside it
    stay where they are. This bounds hours (the queue is never more than one clip over
    target) and only evicts cards that rank below the kept set — no uncompared evictions.
@@ -41,7 +45,10 @@ the existing top-up, before the final re-order.
    **Guard:** the cut only applies when at least one challenger lands inside the kept
    prefix; with no challengers (or none surviving synth / none in the prefix) the queue is
    left untouched, even if it is over target (manual drags, lowered target).
-6. **Apply.** Move admitted cards into the queue; re-home evicted cards with
+6. **Apply — evict first, then admit.** Record and move evicted cards out first, then move
+   admitted cards in (a kill mid-apply leaves the queue under target, which the next run's
+   top-up refills, rather than over target, which the guard would preserve). Re-home evicted
+   cards with
    `reinsert_evicted(cards)`, defined in a new neutral module `routing.py` (avoids the
    `phase2` / `weekly` shared helpers in one place). It records each eviction in the cache, classifies each evicted card (`Classifier.aclassify`,
    one uncached Haiku call per card, ≤ cap per run), re-reads the destination list with
@@ -55,7 +62,7 @@ the existing top-up, before the final re-order.
 8. **Log + return.** Recompute `hours`, `reached_target`, `size` from the kept prefix. `preempt: admitted N [...], evicted M [...]`; add `"preempted"` and
    `"evicted"` to the return dict.
 
-Kill-safety: an admitted card moved before its audio row reaches R2 is caught by the
+Kill-safety: evictions are applied before admissions (see 6). An admitted card moved before its audio row reaches R2 is caught by the
 existing orphan self-heal on the next run.
 
 ## Config
@@ -79,6 +86,7 @@ from its old list. `_NoCache` gains `get/put_eviction`.
   bottom cards; short challenger cannot evict a long bottom card if that would undershoot.
 - Three challengers beat the bar but the 2nd-lowest queue card outranks one of them → that
   queue card is not evicted.
+- Two consecutive runs, each with a new challenger, stay within one clip of target.
 - Over-target (1.5×) queue + one challenger → evicted seconds ≤ admitted seconds + one clip.
 - Synth failure is recorded; a second run makes no synth call for that card.
 - Idempotence: a second run on unchanged lists admits and evicts nothing.
