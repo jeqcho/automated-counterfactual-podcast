@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS pairwise (
 CREATE TABLE IF NOT EXISTS audio (
     card_id TEXT PRIMARY KEY, path TEXT, seconds REAL, engine TEXT, ts REAL
 );
+CREATE TABLE IF NOT EXISTS queue_cooldown (
+    card_id TEXT, reason TEXT, at REAL, PRIMARY KEY (card_id, reason)
+);
+CREATE TABLE IF NOT EXISTS queue_origin (
+    card_id TEXT PRIMARY KEY, list_id TEXT
+);
 """
 
 
@@ -129,6 +135,37 @@ class Cache:
         if not r:
             return None
         return AudioAsset(r["card_id"], r["path"], r["seconds"], r["engine"])
+
+    # --- listen-queue cooldown + origin (preemption bookkeeping) ------------
+    def put_cooldown(self, card_id: str, reason: str) -> None:
+        """reason: 'evicted' | 'synth_failed' (separate rows, never overwrite each other)."""
+        self.conn.execute("INSERT OR REPLACE INTO queue_cooldown VALUES (?,?,?)",
+                          (card_id, reason, time.time()))
+        self.conn.commit()
+
+    def cooldown_ids(self, now: float | None = None,
+                     reasons=("evicted", "synth_failed")) -> set[str]:
+        """Cards sitting out: evicted recently (preemption only) or failed to voice recently."""
+        from . import config
+        now = time.time() if now is None else now
+        cutoff = {"evicted": now - config.QUEUE_EVICT_COOLDOWN_DAYS * 86400,
+                  "synth_failed": now - config.QUEUE_SYNTH_FAIL_COOLDOWN_HOURS * 3600}
+        out: set[str] = set()
+        for reason in reasons:
+            rows = self.conn.execute(
+                "SELECT card_id FROM queue_cooldown WHERE reason=? AND at >= ?",
+                (reason, cutoff[reason]))
+            out |= {r[0] for r in rows}
+        return out
+
+    def put_origin(self, card_id: str, list_id: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO queue_origin VALUES (?,?)", (card_id, list_id))
+        self.conn.commit()
+
+    def get_origin(self, card_id: str) -> str | None:
+        row = self.conn.execute("SELECT list_id FROM queue_origin WHERE card_id=?",
+                                (card_id,)).fetchone()
+        return row[0] if row else None
 
     def close(self) -> None:
         self.conn.close()

@@ -12,42 +12,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 from .. import config
 from ..classify import target_list_id
-from ..sort import insert_index, insert_sorted, merge_sort
+from ..sort import insert_sorted, merge_sort
+from ..routing import _assign_positions, _merge_newcomers  # noqa: F401 — shared with listen_queue
 from .weekly import _insertion_pos  # shared fractional-position helper
-
-
-async def _merge_newcomers(existing_feats, newcomers, acompare) -> list:
-    """Insert a few `newcomers` into a big already-sorted `existing_feats` and return the full
-    priority order. Each newcomer is BINARY-searched into `existing` (O(log n)), and the
-    searches run CONCURRENTLY (independent against the fixed snapshot). Only newcomers that land
-    in the SAME slot are then compared among themselves (`merge_sort` per slot, slots
-    concurrent). Avoids the O(n) linear merge_presorted scan.
-
-    Latency, not call count, is the cost here: comparisons inside one merge/search are serial.
-    Merge-sorting ALL newcomers up front (the old tiebreak) was a ~30-call serial chain for 17
-    cards — most of a 2m19s ranking step (2026-10-04) — to order cards that almost never share
-    a slot. Now the critical path is one binary search (~log2 n) plus a tiny per-slot sort."""
-    if not newcomers:
-        return list(existing_feats)
-    idxs = await asyncio.gather(                                # parallel binary searches
-        *[insert_index(f, existing_feats, acompare) for f in newcomers])
-    at = defaultdict(list)
-    for f, idx in zip(newcomers, idxs):
-        at[idx].append(f)
-    crowded = [i for i, group in at.items() if len(group) > 1]
-    if crowded:                                                 # order same-slot newcomers
-        sorted_groups = await asyncio.gather(*[merge_sort(at[i], acompare) for i in crowded])
-        at.update(zip(crowded, sorted_groups))
-    ordered = []
-    for i in range(len(existing_feats) + 1):
-        ordered.extend(at.get(i, []))
-        if i < len(existing_feats):
-            ordered.append(existing_feats[i])
-    return ordered
 
 
 async def _maybe_checkpoint(checkpoint, log, note):
@@ -59,32 +30,6 @@ async def _maybe_checkpoint(checkpoint, log, note):
     maybe = checkpoint()
     if asyncio.iscoroutine(maybe):
         await maybe
-
-
-def _assign_positions(ordered, pos_by_id, newcomer_ids) -> dict:
-    """Fractional Trello positions for the newcomers in a merged priority order.
-
-    ``ordered`` interleaves the destination list's existing cards (known positions in
-    ``pos_by_id``) with newly-routed cards. A newcomer takes a position strictly between its
-    nearest existing neighbours; a RUN of consecutive newcomers is spaced evenly across that
-    gap (so batch-inserted same-list cards keep their relative order). Returns
-    ``{card_id: pos}`` for newcomers only."""
-    out, n, i = {}, len(ordered), 0
-    while i < n:
-        if ordered[i].card_id not in newcomer_ids:
-            i += 1
-            continue
-        j = i
-        while j < n and ordered[j].card_id in newcomer_ids:
-            j += 1
-        # i-1 and j (if present) are always EXISTING cards (a newcomer run is maximal).
-        lp = pos_by_id.get(ordered[i - 1].card_id, 0.0) if i > 0 else 0.0
-        rp = pos_by_id.get(ordered[j].card_id, lp + 2000.0) if j < n else lp + 2000.0
-        run = j - i
-        for k in range(run):
-            out[ordered[i + k].card_id] = lp + (rp - lp) * (k + 1) / (run + 1)
-        i = j
-    return out
 
 
 async def run_phase2(client, cache, enricher, classifier, comparator,
@@ -226,12 +171,6 @@ async def _build_and_run(apply: bool, log=None) -> dict:
     comparator = Comparator(cache=cache, profile_doc=profile)
     synth = make_synth(cache)
 
-    async def ensure_queue_fn():
-        return await ensure_listen_queue(client, cache, enricher, comparator, synth, log=log)
-
-    def publish_fn():
-        return publish(episodes_for_queue(client, cache), upload=bool(config.R2_BUCKET))
-
     # Checkpoint the SQLite cache to R2 every N routed cards (only when R2 is configured —
     # i.e. on the cloud, where the container can be killed mid-run). push_cache_to_r2 is a
     # blocking boto3 upload, so run it off the loop to keep /health responsive during the push.
@@ -241,6 +180,17 @@ async def _build_and_run(apply: bool, log=None) -> dict:
 
         async def checkpoint():
             await asyncio.to_thread(push_cache_to_r2)
+
+    from ..routing import make_reinsert
+    reinsert_fn = make_reinsert(client, cache, enricher, classifier, comparator, log=log)
+
+    async def ensure_queue_fn():
+        return await ensure_listen_queue(client, cache, enricher, comparator, synth,
+                                         reinsert_fn=reinsert_fn, checkpoint=checkpoint,
+                                         log=log)
+
+    def publish_fn():
+        return publish(episodes_for_queue(client, cache), upload=bool(config.R2_BUCKET))
 
     return await run_phase2(client, cache, enricher, classifier, comparator,
                             ensure_queue_fn, publish_fn, apply=apply, log=log,
