@@ -44,6 +44,8 @@ top-up, replacing the current final re-order step.
    enrich the source lists here (cached digests). Remember each challenger's source list.
    No challengers → order `Q`, done.
 3. **Synthesize** challengers (`synth.many` if present, else `synth` with try/except).
+   `make_synth`'s sequential `synth_many` branch gets a per-item try/except returning
+   `None`, so a failing challenger can never raise out of the pass.
    Failures (`None` / raise): `put_cooldown(id, "synth_failed")`, dropped. None left → done.
 4. **Place.** `C = _merge_newcomers(Q, survivors)` (binary insert, ~log2 n each).
 5. **Cut (displacement rule — never grows the queue past `max(pre, target + one clip)`).**
@@ -62,14 +64,16 @@ top-up, replacing the current final re-order step.
      untouched).
 6. **Persist before Trello.** `put_cooldown(id, "evicted")` for each evicted card,
    `put_origin(id, src)` for each admitted card, then call the optional `checkpoint`
-   (Phase 2 passes its existing R2 push, as `_route_parallel` does before its writes; weekly
-   gains the same `push_cache_to_r2` checkpoint when `R2_BUCKET` is set).
+   (Phase 2 passes its existing R2 push, as `_route_parallel` does before its writes).
+   Weekly runs locally only and never pulls from R2, so it passes `checkpoint=None` — a
+   mid-run push there would overwrite R2 with a stale local cache.
 7. **Apply — evict first, then admit.** Re-home evicted cards via the optional
    `reinsert_fn(cards)`; without one, move them to `To Be Processed` (like the orphan
    self-heal). Then move admitted cards into the queue. A kill mid-apply leaves the queue
    under target, which the next top-up refills.
-8. **Order + return.** Positions = kept order. Return dict gets `hours`, `size`,
-   `reached_target` recomputed from the kept prefix, plus `preempted` and `evicted` id lists;
+8. **Order + return.** Kept list = every queue card not evicted plus admitted challengers,
+   in `C` order (P followed by any retained overfill cards). Positions, `hours`, `size`,
+   `reached_target` are all computed from this full kept list, plus `preempted` and `evicted` id lists;
    log `preempt: admitted N [...], evicted M [...]`.
 
 ## Re-homing (`routing.py`)
@@ -116,6 +120,8 @@ Bounded by `QUEUE_EVICT_MAX` cards per run.
 - `reinsert_fn` gets evicted cards; without it they go to `To Be Processed`.
 - `routing.make_reinsert`: uses origin (no classify call) when recorded, classifier
   otherwise; fresh snapshot; rank marker written.
+- Sequential synth_many: a raising render returns `None`, pass continues.
+- Overfilled queue + admission: retained overfill cards get positions after P, totals count them.
 - Existing listen-queue and phase 2 tests pass.
 
 ## Docs
