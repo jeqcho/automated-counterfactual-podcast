@@ -249,7 +249,8 @@ async def test_checkpoint_before_moves_and_evict_before_admit():
         seen.append(len([c for c in client.calls if c[0] == "move"]))
     reinserted = []
 
-    async def reinsert(cards):
+    async def reinsert(cards, exclude=()):
+        assert exclude == {"n"}
         reinserted.extend(c.id for c in cards)
         client.calls.append(("move", cards[0].id, "HOME"))
     await run(client, cache, enr, cmp, make_synth(lengths), checkpoint=checkpoint,
@@ -315,3 +316,43 @@ async def test_make_reinsert_uses_origin_then_classifier():
     assert "x" in client.ids(S1)
     assert ("rank", "x", 2) in client.calls
     assert "y" in client.ids(LO) and ("rank", "y", 2) in client.calls
+
+
+async def test_topup_then_preempt_same_call_and_topup_respects_cooldown():
+    # queue: q_low (1h) < 2h target. Top-up skips cooling 'cool' (best in System 1), adds 'a'
+    # (2h reached). Preemption then admits 'b' (beats bar q_low) and evicts q_low — same call.
+    prio = {"q_low": 1, "cool": 10, "a": 8, "b": 5, "c": 0}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q_low"], s1=["cool", "b", "c"], lo=["a"], prio=prio,
+                                    lengths=lengths)
+    cache.put_cooldown("cool", "evicted")
+    res = await run(client, cache, enr, cmp, make_synth(lengths), target=2)
+    assert res["added"] == ["a"]
+    assert res["preempted"] == ["b"] and res["evicted"] == ["q_low"]
+    assert set(client.ids(Q)) == {"a", "b"} and "cool" in client.ids(S1)
+
+
+async def test_topup_synth_failure_not_retried_by_preempt():
+    prio = {"q1": 9, "bad": 8, "ok": 7}
+    lengths = {k: H for k in prio}
+    client, cache, enr, cmp = setup(["q1"], s1=["bad", "ok"], prio=prio, lengths=lengths)
+    synth = make_synth(lengths, fail={"bad"})
+    await run(client, cache, enr, cmp, synth, target=2)
+    assert synth.calls.count("bad") == 1
+    assert "bad" in cache.cooldown_ids()
+
+
+async def test_make_reinsert_excludes_leaving_cards_from_rank():
+    from counterfactual_podcast.routing import make_reinsert
+
+    class C(Client):
+        def set_rank_marker(self, card, rank, est, digest=""):
+            self.calls.append(("rank", card.id, rank))
+
+    prio = {"x": 5, "leaving": 9, "s_low": 1}
+    client = C({Q: ["x"], S1: ["leaving", "s_low"]})
+    cache = Cache(":memory:")
+    cache.put_origin("x", S1)
+    await make_reinsert(client, cache, Enricher(prio), None, Comparator())(
+        client.get_cards(Q), exclude={"leaving"})
+    assert ("rank", "x", 1) in client.calls

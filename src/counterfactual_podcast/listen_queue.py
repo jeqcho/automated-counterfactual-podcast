@@ -154,6 +154,9 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
         return a.seconds if a else 0.0
 
     put_origin = getattr(cache, "put_origin", None)
+    put_cooldown = getattr(cache, "put_cooldown", None)
+    cooldown_ids = getattr(cache, "cooldown_ids", None)
+    cooling = cooldown_ids() if cooldown_ids is not None else set()
     current = sum(secs(c.id) for c in queue_cards)
     added: list[CardFeatures] = []
     pool = None   # (per_list_feats, cards_by_id, origin_by_id) — reused by preemption
@@ -163,7 +166,8 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
         # weekly insertion), so MERGE the per-list runs (~cross-list comparisons) instead
         # of a full re-sort of the combined pool (~n log n). Comparisons are sequential
         # LLM calls, so this is the ~8x first-run speedup.
-        pool = await _source_pool(client, enricher, source_list_ids, in_queue)
+        # Cooling cards (recently evicted / failed to voice) sit out the top-up too.
+        pool = await _source_pool(client, enricher, source_list_ids, in_queue | cooling)
         per_list_feats, cards_by_id, origin_by_id = pool
         n_cand = sum(len(p) for p in per_list_feats)
         if log:
@@ -201,8 +205,10 @@ async def ensure_listen_queue(client, cache, enricher, comparator, synth, *,
                     if log:
                         log.warning(f"  skip synth {f.card_id} ({(f.title or '')[:40]}): "
                                     f"{type(e).__name__}: {e}")
-                    continue
+                    asset = None
             if asset is None:
+                if put_cooldown is not None:
+                    put_cooldown(f.card_id, "synth_failed")
                 continue
             if put_origin is not None:
                 put_origin(f.card_id, origin_by_id[f.card_id])
@@ -264,7 +270,7 @@ async def _preempt(client, cache, enricher, comparator, synth, order, secs, run_
 
     in_q = {f.card_id for f in order}
     cooldown_ids = getattr(cache, "cooldown_ids", None)
-    cooling = cooldown_ids() if cooldown_ids is not None else set()
+    cooling = cooldown_ids() if cooldown_ids is not None else set()   # incl. this run's
     if pool is None:
         pool = await _source_pool(client, enricher, source_list_ids, in_q)
     per_list_feats, cards_by_id, origin_by_id = pool
@@ -356,7 +362,9 @@ async def _preempt(client, cache, enricher, comparator, synth, order, secs, run_
     ev_ids = {f.card_id for f in evicted}
     ev_cards = [c for c in client.get_cards(queue_id) if c.id in ev_ids]
     if reinsert_fn is not None:
-        await reinsert_fn(ev_cards)
+        # Admitted cards still sit in their source lists (evict-first); exclude them so the
+        # re-homed cards' rank markers count only cards that stay.
+        await reinsert_fn(ev_cards, exclude={f.card_id for f in admitted})
     else:
         review_id = client.ensure_list(config.TO_BE_PROCESSED_LIST_NAME)
         for c in ev_cards:

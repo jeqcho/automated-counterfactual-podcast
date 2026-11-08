@@ -72,10 +72,10 @@ def make_reinsert(client, cache, enricher, classifier, comparator, log=None):
     """Build the Listen Queue's ``reinsert_fn``: re-home evicted queue cards into their reading
     list at their impact rank. Destination = the list the card came from (``queue_origin``);
     the classifier is only consulted for cards with no recorded origin (queued before
-    preemption existed). Each destination is re-read fresh, so cards just moved into the
-    queue are not in the snapshot."""
+    preemption existed). Each destination is re-read fresh; ``exclude`` drops cards that are
+    about to leave it (challengers admitted to the queue right after this) from the snapshot."""
 
-    async def reinsert(cards) -> None:
+    async def reinsert(cards, exclude=()) -> None:
         if not cards:
             return
         get_origin = getattr(cache, "get_origin", None)
@@ -87,7 +87,7 @@ def make_reinsert(client, cache, enricher, classifier, comparator, log=None):
                 label = (await classifier.aclassify(feats)).get("label", "system1")
                 lid = target_list_id(label)
             groups[lid].append((card, feats))
-        ids = {c.id for c in cards}
+        ids = {c.id for c in cards} | set(exclude)
         for lid, members in groups.items():
             existing = [c for c in client.get_cards(lid) if c.id not in ids]
             existing_feats = await enricher.aenrich_many(existing)
