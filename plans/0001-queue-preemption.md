@@ -21,7 +21,7 @@ the existing top-up, before the final re-order.
    the top over cards not in `Q` with `ok` features; compare each with the bar; a winner is a
    challenger; stop the list at its first loss. **Cooldown:** skip cards evicted in the
    last `config.QUEUE_EVICT_COOLDOWN_DAYS` (default 7), read from a new cache table
-   `evictions(card_id PRIMARY KEY, evicted_at)` added in `Cache._migrate`, so a noisy
+   `queue_cooldown(card_id PRIMARY KEY, reason, at)` (reason = `evicted` | `synth_failed`) added in `Cache._migrate`, so a noisy
    comparison cannot bounce a card in and out every run. Cap total challengers at
    `config.QUEUE_PREEMPT_MAX` (default 5; 0 disables). Reuse the top-up's enrichment when it
    ran; otherwise enrich the source lists here (cached digests). Pairwise results are cached
@@ -33,7 +33,7 @@ the existing top-up, before the final re-order.
    whose audio is `None` or raises (they are removed from `C`). Audio is cached, so a
    challenger that ends up outside the prefix costs nothing next time.
 5. **Cut.** Walk `C` top-down accumulating audio seconds; keep cards until the running total
-   is ≥ `target_sec`; everything after that point is outside the queue. Queue cards outside
+   is ≥ `cut_sec = max(target_sec, pre-pass queue seconds)`; everything after that point is outside the queue. Queue cards outside
    the prefix are **evicted**; challengers inside it are **admitted**; challengers outside it
    stay where they are. This bounds hours (the queue is never more than one clip over
    target) and only evicts cards that rank below the kept set — no uncompared evictions.
@@ -79,6 +79,8 @@ from its old list. `_NoCache` gains `get/put_eviction`.
   bottom cards; short challenger cannot evict a long bottom card if that would undershoot.
 - Three challengers beat the bar but the 2nd-lowest queue card outranks one of them → that
   queue card is not evicted.
+- Over-target (1.5×) queue + one challenger → evicted seconds ≤ admitted seconds + one clip.
+- Synth failure is recorded; a second run makes no synth call for that card.
 - Idempotence: a second run on unchanged lists admits and evicts nothing.
 - Synth failure for a challenger → not admitted, nothing evicted for it.
 - `reinsert_fn` is called with evicted cards; without it they go to `To Be Processed`.
