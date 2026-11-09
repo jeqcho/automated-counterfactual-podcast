@@ -34,7 +34,7 @@ flowchart TD
     LO --> Q
     S2 -.->|"not queued — needs focus"| RO["read-only on the board"]
     Q -->|"text-to-speech"| Feed(["🎧 Private podcast feed"])
-    Feed -->|"listen top-first, archive when done"| Jay
+    Feed -->|"listen top-first · finished ones auto-archive"| Jay
 ```
 
 The Inbox is a mix of reading links **and** todos, so collection happens in **two
@@ -79,8 +79,9 @@ cached so re-runs are nearly free.
   reading list at its rank (up to 5 in / 10 out per run; a displaced card can't push back in for 7 days).
 - Each queued card's text is converted to speech locally (free), and the queue is
   published as a **podcast RSS feed** hosted on Cloudflare. Jay subscribes in any
-  podcast app, listens to the top item first, and **archives it when done** — the next
-  run refills the queue from the best remaining cards.
+  podcast app and listens top-first. A launchd job on the Mac reads Apple Podcasts'
+  play state and **auto-archives finished episodes** (≥90% or marked played), then
+  republishes the feed; the next run refills the queue from the best remaining cards.
 
 ## The two jobs
 

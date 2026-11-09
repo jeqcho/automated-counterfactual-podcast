@@ -105,12 +105,28 @@ back-applied to the published 46-episode feed via `scripts/rebuild_podcast.py`:
   digest) from OG/renamed card names so legacy cache rows don't speak/show URLs on future runs.
 
 **Finished-episode workflow (2026-06-20): feed is a QUEUE, not a library.** Jay listens
-top-down in Apple Podcasts (priority = newest pubDate). When done, he **archives the card**
+top-down in Apple Podcasts (priority = newest pubDate). When done, the card is **auto-archived** (see
+"Auto-archive finished episodes"; he can still archive by hand)
 in `Listen Queue` (no separate history list — he didn't want one). Nothing auto-deletes — an
 episode only leaves the feed when its card leaves `Listen Queue` AND Phase 2 republishes.
 `episodes_for_queue` reads only the `Listen Queue` list and the queue tops up from
 System1+LifeOptim, so an archived card is both out of the feed and won't be re-queued — zero
 code needed. MP3s persist in R2 (orphaned, harmless), so a feed could be rebuilt later.
+
+## Auto-archive finished episodes (2026-11-09) — `pipelines/archive_listened.py`
+Replaces "archive the card by hand". Apple Podcasts has no play-state API, and the feed is
+served straight from r2.dev (no server sees plays; auto-download would fake them anyway).
+So a **Mac launchd job** (`scripts/install_archive_listened.sh`, every 30 min) reads a
+snapshot of `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Documents/MTLibrary.sqlite`
+(`ZMTEPISODE`), which iCloud Sync Library keeps in step with the iPhone.
+- Mapping: our item GUID = Trello card id (fallback: `/{card_id}.mp3` in the enclosure);
+  rows are filtered to enclosures under `/{PODCAST_PREFIX}/`.
+- "Done" = playhead ≥ 90% of duration, OR play count / has-been-played set with playhead
+  reset to ~0 (Apple resets it on finish / Mark as Played). Just-started never counts.
+  Schema is private: columns are discovered via PRAGMA. Verify with `--inspect`.
+- Archives only cards CURRENTLY in Listen Queue, then republishes rss.xml from a throwaway
+  copy of the R2 cache (never pushed back, so it can't clobber a cloud run).
+- Needs Full Disk Access for the venv's real python if TCC blocks the Group Container.
 
 ## Ad-hoc episodes (2026-10-27) — `scripts/publish_adhoc_episodes.py`
 Reads arbitrary text files (line 1 = title) aloud as feed episodes with no source link

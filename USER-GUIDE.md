@@ -91,13 +91,22 @@ run it and walk away.
 
 ### 5. Listen, then clear what you finish
 Listen top-down in Apple Podcasts. When you finish an episode:
-1. In Trello, **archive its card** in the **Listen Queue** list (right-click → Archive, or
-   open the card → Archive).
-2. Next time you press **"Sort readables,"** the archived episodes drop off the feed and
-   the queue refills with the next most-important reads.
+**This is automatic.** Every 30 minutes your Mac checks Apple Podcasts. Any episode
+you've basically finished (90%+ through, or marked as played) gets its card archived in
+**Listen Queue** and drops off the feed. Starting an episode doesn't count.
 
-> You don't have to do this after every episode — finish a few, archive their cards, then
-> press the button once. The queue only refills when you run it.
+Press **"Sort readables"** when you want the queue refilled with the next most-important
+reads. You can still archive a card by hand in Trello any time.
+
+**One-time setup on the Mac:**
+1. Turn on **Sync Library** in Podcasts on both iPhone (Settings → Podcasts) and Mac
+   (Podcasts → Settings → General), so iPhone listening reaches the Mac.
+2. In the project folder, run `scripts/install_archive_listened.sh`.
+3. If it says so, give the Python it prints **Full Disk Access** (System Settings →
+   Privacy & Security), then run the script again.
+
+The Mac has to be on (asleep is fine; it catches up on wake). To check what it would do:
+`uv run python -m counterfactual_podcast.pipelines.archive_listened` (dry run).
 
 ---
 
@@ -123,8 +132,8 @@ file (the `TRIGGER_TOKEN` line). Keep that token private.
 
 ## Good to know
 
-- **Nothing deletes itself.** An episode only leaves the feed when you move its card out of
-  Listen Queue *and* press "Sort readables." So you'll never lose your place by surprise.
+- **Only finished episodes leave on their own.** The Mac archives an episode once you're
+  90%+ through (or mark it played). Half-listened episodes stay put.
 - **Half-finished episodes are safe.** If a refresh re-orders the feed, your podcast app
   keeps your playback position.
 - **System 2 reads aren't in the podcast** — those need your eyes, not your ears. Read them
@@ -144,6 +153,6 @@ Press "Extract readables"→ moves reading links to "To Be Processed"
 Review + prune           → drag wrong ones back to Inbox
 Press "Sort readables"   → ranks, files, refreshes podcast (~20h)
 Listen top-down          → Apple Podcasts (top = most important)
-Finished an episode      → archive its card in Listen Queue
+Finished an episode      → auto-archived by the Mac (every 30 min)
 Refresh the queue        → press "Sort readables" again
 ```
